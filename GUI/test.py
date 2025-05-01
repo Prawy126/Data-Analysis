@@ -1,11 +1,15 @@
-# plik: analysis_script.py
-from Dane.Dane import load_retail_data, load_student_math_data, load_student_por_data
+from Dane.Dane import *
 
-# TODO: Wczytanie danych z pliku CSV zmienić aby brało ściężkę względną a nie bezwględną
-# wszystko działa tylko należy zrobić tego TODO aby pracwoało się wygodniej
+retail_df = wczytaj_dane_sklepu(wyswietlaj_informacje=True)
+if retail_df is not None:
+    print(retail_df.describe())
 
-df = load_retail_data(verbose=True)
+math_df = wczytaj_dane_szkolne(przedmiot="math", wyswietlaj_informacje=True)
+por_df = wczytaj_dane_szkolne(przedmiot="por", wyswietlaj_informacje=True)
 
-df = load_student_math_data(verbose=True)
+if math_df is not None and por_df is not None:
+    math_df['przedmiot'] = 'mat'
+    por_df['przedmiot'] = 'por'
 
-df = load_student_por_data(verbose=True)
+    combined_students = pd.concat([math_df, por_df])
+    print(combined_students.groupby('przedmiot')['G3'].mean())
