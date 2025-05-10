@@ -1,15 +1,7 @@
-from Dane.Dane import *
+# Minimalne wywołanie - tylko ścieżka do pliku
+from Dane.Dane import wczytaj_csv, test_wczytaj_csv
 
-retail_df = wczytaj_dane_sklepu(wyswietlaj_informacje=True)
-if retail_df is not None:
-    print(retail_df.describe())
+sciezka_retail = "online_retail_II.csv"
+sciezka_student = "student-mat.csv"
 
-math_df = wczytaj_dane_szkolne(przedmiot="math", wyswietlaj_informacje=True)
-por_df = wczytaj_dane_szkolne(przedmiot="por", wyswietlaj_informacje=True)
-
-if math_df is not None and por_df is not None:
-    math_df['przedmiot'] = 'mat'
-    por_df['przedmiot'] = 'por'
-
-    combined_students = pd.concat([math_df, por_df])
-    print(combined_students.groupby('przedmiot')['G3'].mean())
+test_wczytaj_csv(sciezka_retail)
