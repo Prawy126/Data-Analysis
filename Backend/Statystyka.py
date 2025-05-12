@@ -1,9 +1,49 @@
 import pandas as pd
 import numpy as np
-from typing import Optional, List, Dict, Union, Tuple
+from typing import Optional, List, Dict, Union, Tuple, Any
 import os
-import sys
 from Dane.Dane import wczytaj_csv
+
+
+def oblicz_statystyki_nie_numeryczne(df: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
+    """
+    Oblicza statystyki dla kolumn nie-numerycznych.
+
+    Parametry:
+    ---------
+    df : pd.DataFrame
+        DataFrame z danymi
+
+    Zwraca:
+    ------
+    Dict[str, Dict[str, Any]]
+        Słownik ze statystykami dla każdej kolumny nie-numerycznej
+    """
+    if not isinstance(df, pd.DataFrame):
+        raise ValueError("Parametr df musi być typu pandas.DataFrame")
+
+    statystyki = {}
+
+    for kolumna in df.columns:
+        if not pd.api.types.is_numeric_dtype(df[kolumna]):
+            # Pomiń puste kolumny
+            if df[kolumna].isna().all():
+                continue
+
+            # Obliczanie statystyk
+            wartosci = df[kolumna].dropna()
+            statystyki[kolumna] = {
+                'liczba_wystapien': len(wartosci),
+                'wartosci_unikalne': wartosci.nunique(),
+                'najczestsza_wartosc': wartosci.mode().iloc[0] if not wartosci.empty else None,
+                'czestotliwosc_najczestszej': wartosci.value_counts().max() / len(wartosci),
+                'procent_wypelnienia': (len(wartosci) / len(df)) * 100,
+                'dlugosc_min': wartosci.astype(str).str.len().min() if not wartosci.empty else 0,
+                'dlugosc_max': wartosci.astype(str).str.len().max() if not wartosci.empty else 0,
+                'dlugosc_srednia': wartosci.astype(str).str.len().mean() if not wartosci.empty else 0
+            }
+
+    return statystyki
 
 
 def znajdz_kolumny_numeryczne(df: pd.DataFrame) -> List[str]:
@@ -67,33 +107,57 @@ def wydobadz_wartosci_numeryczne(df: pd.DataFrame, wybrane_kolumny: Optional[Lis
     return wartosci_numeryczne
 
 
-def oblicz_statystyki(wartosci_numeryczne: Dict[str, np.ndarray]) -> Dict[str, Dict[str, float]]:
+def analizuj_dane_numeryczne(sciezka_pliku: str,
+                             separator: Union[str, List[str]] = None,
+                             wybrane_kolumny: Optional[List[str]] = None) -> Tuple[
+    Dict[str, np.ndarray], Dict[str, Dict[str, float]]]:
     """
-    Oblicza podstawowe statystyki dla każdej kolumny numerycznej.
+    Wczytuje dane z pliku CSV, wyodrębnia wartości numeryczne i oblicza podstawowe statystyki.
 
     Parametry:
     ---------
-    wartosci_numeryczne : Dict[str, np.ndarray]
-        Słownik z nazwami kolumn i wartościami numerycznymi
+    sciezka_pliku : str
+        Ścieżka do pliku CSV
+    separator : Union[str, List[str]], opcjonalnie
+        Separator kolumn (jeśli None, zostanie wykryty automatycznie)
+        Może być pojedynczym separatorem lub listą separatorów do wyboru
+    wybrane_kolumny : Optional[List[str]], opcjonalnie
+        Lista kolumn do analizy. Jeśli None, analizuje wszystkie kolumny numeryczne.
 
     Zwraca:
     ------
-    Dict[str, Dict[str, float]]
-        Słownik ze statystykami dla każdej kolumny
+    Tuple[Dict[str, np.ndarray], Dict[str, Dict[str, float]]]
+        Krotka zawierająca:
+        - Słownik z wartościami numerycznymi dla każdej kolumny
+        - Słownik ze statystykami dla każdej kolumny
     """
-    statystyki = {}
+    print(f"\n[INFO] Rozpoczynam analizę danych numerycznych z pliku {os.path.basename(sciezka_pliku)}...")
 
-    for kolumna, wartosci in wartosci_numeryczne.items():
-        statystyki[kolumna] = {
-            'średnia': float(np.mean(wartosci)),
-            'mediana': float(np.median(wartosci)),
-            'min': float(np.min(wartosci)),
-            'max': float(np.max(wartosci)),
-            'odchylenie_std': float(np.std(wartosci)),
-            'liczba_wartości': len(wartosci)
-        }
+    # Wczytanie danych z wykorzystaniem istniejącej funkcji
+    df = wczytaj_csv(sciezka_pliku, separator=separator, wyswietlaj_informacje=True)
 
-    return statystyki
+    if df is None:
+        print("[BŁĄD] Nie udało się wczytać danych.")
+        return {}, {}
+
+    # Znalezienie kolumn numerycznych
+    kolumny_numeryczne = znajdz_kolumny_numeryczne(df)
+    print(f"\n[INFO] Dostępne kolumny numeryczne: {kolumny_numeryczne}")
+
+    # Wydobycie wartości numerycznych
+    wartosci_numeryczne = wydobadz_wartosci_numeryczne(df, wybrane_kolumny)
+
+    # Obliczenie statystyk
+    statystyki = oblicz_statystyki(wartosci_numeryczne)
+
+    # Wyświetlenie wyników
+    print("\n[WYNIKI] Statystyki dla kolumn numerycznych:")
+    for kolumna, stats in statystyki.items():
+        print(f"\nKolumna: {kolumna}")
+        for nazwa_stat, wartosc in stats.items():
+            print(f"  - {nazwa_stat}: {wartosc}")
+
+    return wartosci_numeryczne, statystyki
 
 
 def analizuj_dane_numeryczne(sciezka_pliku: str,
@@ -147,6 +211,33 @@ def analizuj_dane_numeryczne(sciezka_pliku: str,
 
     return wartosci_numeryczne, statystyki
 
+def oblicz_statystyki(wartosci_numeryczne: Dict[str, np.ndarray]) -> Dict[str, Dict[str, float]]:
+    """
+    Oblicza podstawowe statystyki dla każdej kolumny numerycznej.
+
+    Parametry:
+    ---------
+    wartosci_numeryczne : Dict[str, np.ndarray]
+        Słownik z nazwami kolumn i wartościami numerycznymi
+
+    Zwraca:
+    ------
+    Dict[str, Dict[str, float]]
+        Słownik ze statystykami dla każdej kolumny
+    """
+    statystyki = {}
+
+    for kolumna, wartosci in wartosci_numeryczne.items():
+        statystyki[kolumna] = {
+            'średnia': float(np.mean(wartosci)),
+            'mediana': float(np.median(wartosci)),
+            'min': float(np.min(wartosci)),
+            'max': float(np.max(wartosci)),
+            'odchylenie_std': float(np.std(wartosci)),
+            'liczba_wartości': len(wartosci)
+        }
+
+    return statystyki
 
 def srednia_wszystkich_wartosci_numerycznych(wartosci_numeryczne: Dict[str, np.ndarray]) -> float:
     """
@@ -176,12 +267,23 @@ def srednia_wszystkich_wartosci_numerycznych(wartosci_numeryczne: Dict[str, np.n
 if __name__ == "__main__":
     sciezka_pliku = "online_retail_II.csv"
 
-    # Przykład użycia - możesz zmienić listę kolumn według potrzeb
-    wybrane_kolumny = ["Quantity", "Price"]  # Tutaj wpisz interesujące Cię kolumny
+    # Załaduj dane raz
+    df = wczytaj_csv(sciezka_pliku, separator=None, wyswietlaj_informacje=True)
 
-    wartosci, statystyki = analizuj_dane_numeryczne(sciezka_pliku, wybrane_kolumny=wybrane_kolumny)
+    if df is not None:
+        # Analiza danych numerycznych
+        wybrane_kolumny = ["Quantity", "Price"]
+        wartosci, statystyki = analizuj_dane_numeryczne(sciezka_pliku, wybrane_kolumny=wybrane_kolumny)
 
-    # Oblicz średnią tylko dla wybranych kolumn
-    if wartosci:
-        srednia_ogolna = srednia_wszystkich_wartosci_numerycznych(wartosci)
-        print(f"\n[PODSUMOWANIE] Średnia wszystkich wartości numerycznych: {srednia_ogolna}")
+        # Oblicz średnią ogólną
+        if wartosci:
+            srednia_ogolna = srednia_wszystkich_wartosci_numerycznych(wartosci)
+            print(f"\n[PODSUMOWANIE] Średnia wszystkich wartości numerycznych: {srednia_ogolna}")
+
+        # Analiza danych nie-numerycznych (przekazujemy załadowany wcześniej DataFrame)
+        statystyki_nie_numeryczne = oblicz_statystyki_nie_numeryczne(df)
+        print("\n[WYNIKI] Statystyki dla kolumn nie-numerycznych:")
+        for kolumna, stats in statystyki_nie_numeryczne.items():
+            print(f"\nKolumna: {kolumna}")
+            for nazwa_stat, wartosc in stats.items():
+                print(f"  - {nazwa_stat}: {wartosc}")

@@ -8,9 +8,9 @@ from datetime import datetime
 
 def wczytaj_csv(
         sciezka_pliku: str,
-        separator: str = None,
+        separator: Union[str, List[str]] = None,  # Zmieniono typ na Union[str, List[str]]
         kolumny_daty: List[str] = None,
-        format_daty: str = None,  # Dodany parametr format daty
+        format_daty: str = None,
         wymagane_kolumny: List[str] = None,
         wyswietlaj_informacje: bool = False
 ) -> Optional[pd.DataFrame]:
@@ -21,8 +21,9 @@ def wczytaj_csv(
     ---------
     sciezka_pliku : str
         Ścieżka do pliku CSV
-    separator : str, opcjonalnie
+    separator : Union[str, List[str]], opcjonalnie
         Separator kolumn (jeśli None, zostanie wykryty automatycznie)
+        Może być pojedynczym separatorem lub listą separatorów do wyboru
     kolumny_daty : List[str], opcjonalnie
         Lista nazw kolumn daty (jeśli None, zostaną wykryte automatycznie)
     format_daty : str, opcjonalnie
@@ -50,6 +51,26 @@ def wczytaj_csv(
             separator = _wykryj_separator(sciezka_pliku, kodowanie)
             if wyswietlaj_informacje:
                 print(f"Wykryty separator: '{separator}'")
+        elif isinstance(separator, list):  # Obsługa listy separatorów
+            najlepszy = None
+            max_kolumn = 0
+
+            for sep in separator:
+                try:
+                    test_df = pd.read_csv(sciezka_pliku, sep=sep, encoding=kodowanie, nrows=5)
+                    if len(test_df.columns) > max_kolumn:
+                        max_kolumn = len(test_df.columns)
+                        najlepszy = sep
+                except:
+                    continue
+
+            if najlepszy:
+                separator = najlepszy
+            else:
+                separator = ','  # Domyślny separator
+
+            if wyswietlaj_informacje:
+                print(f"Wybrany separator: '{separator}'")
 
         # Podstawowe parametry wczytywania
         parametry = {
@@ -58,7 +79,6 @@ def wczytaj_csv(
             'on_bad_lines': 'skip',
             'engine': 'python'  # Używamy bezpieczniejszego silnika Python
         }
-
         # Wczytanie danych z obsługą błędów
         try:
             df = pd.read_csv(sciezka_pliku, **parametry)
