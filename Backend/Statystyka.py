@@ -3,7 +3,6 @@ import numpy as np
 from typing import Optional, List, Dict, Union, Tuple
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Dane.Dane import wczytaj_csv
 
 
@@ -30,14 +29,17 @@ def znajdz_kolumny_numeryczne(df: pd.DataFrame) -> List[str]:
     return kolumny_numeryczne
 
 
-def wydobadz_wartosci_numeryczne(df: pd.DataFrame) -> Dict[str, np.ndarray]:
+def wydobadz_wartosci_numeryczne(df: pd.DataFrame, wybrane_kolumny: Optional[List[str]] = None) -> Dict[
+    str, np.ndarray]:
     """
-    Wydobywa wszystkie wartości numeryczne z DataFrame.
+    Wydobywa wartości numeryczne z wybranych kolumn DataFrame.
 
     Parametry:
     ---------
     df : pd.DataFrame
         DataFrame z danymi
+    wybrane_kolumny : Optional[List[str]]
+        Lista wybranych kolumn do analizy. Jeśli None, analizuje wszystkie kolumny numeryczne.
 
     Zwraca:
     ------
@@ -45,10 +47,19 @@ def wydobadz_wartosci_numeryczne(df: pd.DataFrame) -> Dict[str, np.ndarray]:
         Słownik z nazwami kolumn jako kluczami i tablicami wartości numerycznych
     """
     wartosci_numeryczne = {}
-    kolumny_numeryczne = znajdz_kolumny_numeryczne(df)
 
-    for kolumna in kolumny_numeryczne:
-        # Usuwamy wartości NaN i konwertujemy do tablicy numpy
+    if wybrane_kolumny is None:
+        kolumny_do_analizy = znajdz_kolumny_numeryczne(df)
+    else:
+        kolumny_do_analizy = [k for k in wybrane_kolumny if k in df.columns]
+
+        # Sprawdź czy wszystkie wybrane kolumny istnieją i są numeryczne
+        for kolumna in kolumny_do_analizy:
+            if not pd.api.types.is_numeric_dtype(df[kolumna]):
+                print(f"[UWAGA] Kolumna {kolumna} nie jest numeryczna - zostanie pominięta.")
+                kolumny_do_analizy.remove(kolumna)
+
+    for kolumna in kolumny_do_analizy:
         wartosci = df[kolumna].dropna().values
         if len(wartosci) > 0:
             wartosci_numeryczne[kolumna] = wartosci
@@ -85,7 +96,9 @@ def oblicz_statystyki(wartosci_numeryczne: Dict[str, np.ndarray]) -> Dict[str, D
     return statystyki
 
 
-def analizuj_dane_numeryczne(sciezka_pliku: str, separator: str = None) -> Tuple[
+def analizuj_dane_numeryczne(sciezka_pliku: str,
+                             separator: str = None,
+                             wybrane_kolumny: Optional[List[str]] = None) -> Tuple[
     Dict[str, np.ndarray], Dict[str, Dict[str, float]]]:
     """
     Wczytuje dane z pliku CSV, wyodrębnia wartości numeryczne i oblicza podstawowe statystyki.
@@ -96,6 +109,8 @@ def analizuj_dane_numeryczne(sciezka_pliku: str, separator: str = None) -> Tuple
         Ścieżka do pliku CSV
     separator : str, opcjonalnie
         Separator kolumn (jeśli None, zostanie wykryty automatycznie)
+    wybrane_kolumny : Optional[List[str]], opcjonalnie
+        Lista kolumn do analizy. Jeśli None, analizuje wszystkie kolumny numeryczne.
 
     Zwraca:
     ------
@@ -115,14 +130,10 @@ def analizuj_dane_numeryczne(sciezka_pliku: str, separator: str = None) -> Tuple
 
     # Znalezienie kolumn numerycznych
     kolumny_numeryczne = znajdz_kolumny_numeryczne(df)
-    print(f"\n[INFO] Znaleziono {len(kolumny_numeryczne)} kolumn numerycznych: {kolumny_numeryczne}")
-
-    if not kolumny_numeryczne:
-        print("[UWAGA] Nie znaleziono żadnych kolumn numerycznych w danych.")
-        return {}, {}
+    print(f"\n[INFO] Dostępne kolumny numeryczne: {kolumny_numeryczne}")
 
     # Wydobycie wartości numerycznych
-    wartosci_numeryczne = wydobadz_wartosci_numeryczne(df)
+    wartosci_numeryczne = wydobadz_wartosci_numeryczne(df, wybrane_kolumny)
 
     # Obliczenie statystyk
     statystyki = oblicz_statystyki(wartosci_numeryczne)
@@ -163,18 +174,14 @@ def srednia_wszystkich_wartosci_numerycznych(wartosci_numeryczne: Dict[str, np.n
 
 
 if __name__ == "__main__":
-
-
     sciezka_pliku = "online_retail_II.csv"
 
-    wartosci, statystyki = analizuj_dane_numeryczne(sciezka_pliku)
+    # Przykład użycia - możesz zmienić listę kolumn według potrzeb
+    wybrane_kolumny = ["Quantity", "Price"]  # Tutaj wpisz interesujące Cię kolumny
 
-    # Usuń niepożądane klucze
-    wartosci.pop('InvoiceNo', None)
-    wartosci.pop('StockCode', None)
-    wartosci.pop("CustomerID", None)
+    wartosci, statystyki = analizuj_dane_numeryczne(sciezka_pliku, wybrane_kolumny=wybrane_kolumny)
 
-    # Oblicz średnią po usunięciu kluczy
+    # Oblicz średnią tylko dla wybranych kolumn
     if wartosci:
         srednia_ogolna = srednia_wszystkich_wartosci_numerycznych(wartosci)
         print(f"\n[PODSUMOWANIE] Średnia wszystkich wartości numerycznych: {srednia_ogolna}")
