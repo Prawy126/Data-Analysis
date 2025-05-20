@@ -1,10 +1,7 @@
 from typing import Optional, Union, List
-
 import numpy as np
 import pandas as pd
-
 from Dane.Dane import wczytaj_csv
-
 
 def oblicz_korelacje_pearsona(
         sciezka_pliku: str,
@@ -114,8 +111,3 @@ def oblicz_korelacje_spearmana(sciezka_pliku: str,
         import traceback
         print(traceback.format_exc())
         return None
-
-wynik = oblicz_korelacje_spearmana(
-    sciezka_pliku="/home/prawy126/Desktop/nauka/HurtownieDanych/Backend/online_retail_II.csv",
-    wyswietlaj_informacje=True
-)
