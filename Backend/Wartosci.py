@@ -69,7 +69,7 @@ def zamien_wartosci(
                     wynik_df[kolumna] = wynik_df[kolumna].replace(stara, nowa)
 
                 if wyswietlaj_informacje:
-                    print(f"[INFO] 🤖 Automatycznie zaktualizowano kolumnę '{kolumna}': {zmiany}")
+                    print(f"[INFO] Automatycznie zaktualizowano kolumnę '{kolumna}': {zmiany}")
 
         else:
             raise ValueError(
