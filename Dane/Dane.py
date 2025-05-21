@@ -8,90 +8,72 @@ from datetime import datetime
 
 def wczytaj_csv(
         sciezka_pliku: str,
-        separator: Union[str, List[str]] = None,  # Zmieniono typ na Union[str, List[str]]
+        separator: Union[str, List[str]] = None,
         kolumny_daty: List[str] = None,
         format_daty: str = None,
         wymagane_kolumny: List[str] = None,
         wyswietlaj_informacje: bool = False
 ) -> Optional[pd.DataFrame]:
     """
-    Ulepszona funkcja do automatycznego wczytywania CSV z minimalnymi parametrami
-
-    Parametry:
-    ---------
-    sciezka_pliku : str
-        Ścieżka do pliku CSV
-    separator : Union[str, List[str]], opcjonalnie
-        Separator kolumn (jeśli None, zostanie wykryty automatycznie)
-        Może być pojedynczym separatorem lub listą separatorów do wyboru
-    kolumny_daty : List[str], opcjonalnie
-        Lista nazw kolumn daty (jeśli None, zostaną wykryte automatycznie)
-    format_daty : str, opcjonalnie
-        Format daty (np. "%Y-%m-%d %H:%M:%S") - jeśli None, zostanie wykryty automatycznie
-    wymagane_kolumny : List[str], opcjonalnie
-        Lista wymaganych kolumn
-    wyswietlaj_informacje : bool
-        Czy wyświetlać informacje diagnostyczne
+    Ulepszona i zoptymalizowana funkcja do automatycznego wczytywania CSV
+    - Domyślnie używa silnika 'c', fallback na 'python'
+    - Dla dużych plików (>100MB) czyta w chunkach
+    - Random sampling (max 1000 wierszy) do detekcji typów
     """
     try:
         if wyswietlaj_informacje:
-            print(f"\n[INFO] Rozpoczynam wczytywanie danych z {os.path.basename(sciezka_pliku)}...")
+            print(f"[INFO] Wczytywanie {os.path.basename(sciezka_pliku)}...")
 
-        # Sprawdzenie, czy plik istnieje
         if not os.path.exists(sciezka_pliku):
             raise FileNotFoundError(f"Plik nie istnieje: {sciezka_pliku}")
 
-        # Automatyczne wykrywanie kodowania
+        # Detekcja kodowania i separatora
         kodowanie = _wykryj_kodowanie(sciezka_pliku)
         if wyswietlaj_informacje:
             print(f"Kodowanie: {kodowanie}")
 
-        # Automatyczne wykrywanie separatora
         if separator is None:
             separator = _wykryj_separator(sciezka_pliku, kodowanie)
             if wyswietlaj_informacje:
-                print(f"Wykryty separator: '{separator}'")
-        elif isinstance(separator, list):  # Obsługa listy separatorów
-            najlepszy = None
-            max_kolumn = 0
-
+                print(f"Separator: '{separator}'")
+        elif isinstance(separator, list):
+            najlepszy, max_kol = None, 0
             for sep in separator:
                 try:
-                    test_df = pd.read_csv(sciezka_pliku, sep=sep, encoding=kodowanie, nrows=5)
-                    if len(test_df.columns) > max_kolumn:
-                        max_kolumn = len(test_df.columns)
-                        najlepszy = sep
+                    cols = pd.read_csv(sciezka_pliku, sep=sep, encoding=kodowanie, nrows=5, engine='c').shape[1]
+                    if cols > max_kol:
+                        max_kol, najlepszy = cols, sep
                 except:
                     continue
-
-            if najlepszy:
-                separator = najlepszy
-            else:
-                separator = ','  # Domyślny separator
-
+            separator = najlepszy or ','
             if wyswietlaj_informacje:
-                print(f"Wybrany separator: '{separator}'")
+                print(f"Wybrany separator z listy: '{separator}'")
 
-        # Podstawowe parametry wczytywania
-        parametry = {
-            'sep': separator,
-            'encoding': kodowanie,
-            'on_bad_lines': 'skip',
-            'engine': 'python'  # Używamy bezpieczniejszego silnika Python
-        }
-        # Wczytanie danych z obsługą błędów
-        try:
-            df = pd.read_csv(sciezka_pliku, **parametry)
-        except Exception as e:
-            print(f"Błąd podczas wczytywania CSV: {str(e)}")
-            # Próba z innymi ustawieniami
-            parametry['engine'] = 'c'
-            parametry['on_bad_lines'] = 'warn'
-            df = pd.read_csv(sciezka_pliku, **parametry)
+        # Parametry do czytania
+        filesize = os.path.getsize(sciezka_pliku)
+        csv_params = {'sep': separator, 'encoding': kodowanie}
 
-        # Oczyszczenie nazw kolumn
+        # Czytanie w chunkach, jeśli plik duży
+        if filesize > 100 * 1024 * 1024:  # >100MB
+            chunk_size = 100_000
+            csv_params.update({'engine': 'c', 'on_bad_lines': 'warn'})
+            try:
+                reader = pd.read_csv(sciezka_pliku, chunksize=chunk_size, **csv_params)
+            except Exception:
+                csv_params.update({'engine': 'python', 'on_bad_lines': 'skip'})
+                reader = pd.read_csv(sciezka_pliku, chunksize=chunk_size, **csv_params)
+            df = pd.concat(reader, ignore_index=True)
+        else:
+            csv_params.update({'engine': 'c', 'on_bad_lines': 'warn'})
+            try:
+                df = pd.read_csv(sciezka_pliku, **csv_params)
+            except Exception:
+                csv_params.update({'engine': 'python', 'on_bad_lines': 'skip'})
+                df = pd.read_csv(sciezka_pliku, **csv_params)
+
+        # Czyszczenie nagłówków
         df.columns = [col.strip().replace('\ufeff', '') for col in df.columns]
-        df.columns = df.columns.str.replace(r'[\'\"\\]', '', regex=True)
+        df.columns = df.columns.str.replace(r"[\'\\]", '', regex=True)
 
         # Sprawdzenie wymaganych kolumn
         if wymagane_kolumny:
@@ -100,32 +82,78 @@ def wczytaj_csv(
                 raise ValueError(f"Brakujące wymagane kolumny: {brakujace}")
             df = df.dropna(subset=wymagane_kolumny)
 
-        # Automatyczne wykrywanie typów danych
+        # Automatyczna detekcja i konwersja typów
         df = _automatyczna_detekcja_typow(df, kolumny_daty, format_daty, wyswietlaj_informacje)
 
         # Optymalizacja pamięci
         df = _optymalizuj_pamiec(df)
 
         if wyswietlaj_informacje:
-            print("\n[SUKCES] Dane zostały poprawnie wczytane")
-            print(f"Liczba wierszy: {len(df)}")
-            print(f"Kolumny: {df.columns.tolist()}")
-            print("\nTypy danych:")
-            for kolumna, typ in df.dtypes.items():
-                print(f"  - {kolumna}: {typ}")
-            print("\nPrzykładowe rekordy:")
-            print(df.head(2))
-
+            print(f"[SUKCES] Wierszy: {len(df)}, Kolumny: {df.columns.tolist()}")
         return df
 
     except FileNotFoundError as e:
-        print(f"\n[BŁĄD] {str(e)}")
+        print(f"[BŁĄD] {e}")
         return None
     except Exception as e:
-        print(f"\n[BŁĄD] Błąd podczas wczytywania danych: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
+        print(f"[BŁĄD] {e}")
         return None
+
+
+def _automatyczna_detekcja_typow(df: pd.DataFrame,
+                                 kolumny_daty: List[str] = None,
+                                 format_daty: str = None,
+                                 wyswietlaj: bool = False) -> pd.DataFrame:
+    """
+    Detekcja typów z losowym próbkowaniem (max 1000 wierszy)
+    """
+    df_copy = df.copy()
+    # Losowa próbka dla detekcji
+    n = min(len(df_copy), 1000)
+    df_sample = df_copy.sample(n=n, random_state=42) if n > 0 else df_copy
+
+    # Konwersja kolumn dat
+    if kolumny_daty:
+        for col in kolumny_daty:
+            if col in df_copy.columns:
+                try:
+                    fmt = format_daty or _wykryj_format_daty(df_sample[col])
+                    df_copy[col] = pd.to_datetime(df_copy[col], format=fmt, errors='coerce')
+                    if wyswietlaj:
+                        print(f"Data [{col}] użyty format: {fmt}")
+                except Exception as e:
+                    if wyswietlaj:
+                        print(f"Błąd daty {col}: {e}")
+
+    for col in df_copy.columns:
+        if kolumny_daty and col in kolumny_daty:
+            continue
+        sample = df_sample[col].dropna().astype(str)
+
+        # Numeryczne
+        if _czy_kolumna_numeryczna(sample):
+            sep = _wykryj_separator_dziesietny(sample)
+            df_copy[col] = _konwertuj_na_liczbe(df_copy[col], sep)
+            if wyswietlaj:
+                print(f"Numeryczna: {col}")
+            continue
+
+        # Daty
+        if _czy_kolumna_zawiera_daty(sample):
+            fmt = _wykryj_format_daty(sample)
+            df_copy[col] = pd.to_datetime(df_copy[col], format=fmt, errors='coerce')
+            if wyswietlaj:
+                print(f"Data wykryta: {col} (format: {fmt})")
+            continue
+
+        # Kategorie
+        if _czy_kolumna_kategorialna(sample):
+            df_copy[col] = df_copy[col].astype('category')
+            if wyswietlaj:
+                print(f"Kategoria: {col}")
+
+    return df_copy
+
 
 
 def _wykryj_kodowanie(sciezka_pliku: str) -> str:
