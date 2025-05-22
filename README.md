@@ -115,7 +115,7 @@ _Aktualnie trwają prace_
 
 **Jakub Opar** – frontend (GUI, wizualizacja).
 
-**Michał Pilecki** – backend (algorytmy ML, statystyki).
+**Michał Pilecki** – backend (algorytmy ML, statystyki). [![wakatime](https://wakatime.com/badge/github/Prawy126/HurtownieDanych.svg)](https://wakatime.com/badge/github/Prawy126/HurtownieDanych)
 
 ---
 
