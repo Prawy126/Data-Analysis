@@ -1,382 +1,219 @@
+# main.py
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import ttk, filedialog, messagebox
 import pandas as pd
-import csv
+import numpy  as np
+
+from Dane.Dane  import wczytaj_csv
+from Backend.Statystyka import analizuj_dane_numeryczne
+from Backend.Korelacje  import oblicz_korelacje_pearsona, oblicz_korelacje_spearmana
 
 
-class AnalysisPanel:
-    """Bazowa klasa dla wszystkich paneli analizy danych"""
+class MainApp(tk.Tk):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title("Data Toolkit")
+        self.geometry("1000x600")
+        self.minsize(820, 480)
 
-    def __init__(self, name):
-        self.name = name
-        self.frame = None
+        # przechowujemy DF i ścieżkę
+        self.df:   pd.DataFrame | None = None
+        self.path: str | None          = None
 
-    def create_ui(self, parent):
-        """Tworzy interfejs użytkownika dla panelu"""
-        self.frame = ttk.Frame(parent)
-        return self.frame
+        # ---------- menu ----------
+        menubar = tk.Menu(self);  self.config(menu=menubar)
+        akcje   = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Akcje", menu=akcje)
+        akcje.add_command(label="Pre-processing", command=self._load_pre)
+        akcje.add_command(label="Statystyka",     command=self._load_stats)
+        akcje.add_separator();  akcje.add_command(label="Zamknij", command=self.quit)
 
-    def analyze_data(self, df, selected_columns):
-        """Analizuje dane i zwraca wyniki"""
-        raise NotImplementedError
+        # ---------- notebook ----------
+        self.nb = ttk.Notebook(self)
+        self.nb.pack(fill="both", expand=True, padx=10, pady=10)
 
-    def update_ui(self, results):
-        """Aktualizuje interfejs użytkownika wynikami analizy"""
-        raise NotImplementedError
+        self._load_pre()          # domyślna sekcja
 
+    # ──────────────────────────────────────────────────────────────
+    #  Wspólne: loader CSV + pomoc
+    # ──────────────────────────────────────────────────────────────
+    def _add_loader(self, parent: tk.Widget, on_success=None) -> None:
+        """Przycisk + etykieta. on_success(df) wywoływane po udanym wczytaniu."""
+        frm = ttk.Frame(parent); frm.pack(fill="x", padx=10, pady=(5, 12))
+        info = tk.StringVar(value="(brak pliku)")
 
-class NumericalPanel(AnalysisPanel):
-    def __init__(self):
-        super().__init__("Dane numeryczne")
-        self.treeview = None
+        def choose() -> None:
+            fp = filedialog.askopenfilename(
+                title="Wybierz plik CSV",
+                filetypes=[("CSV", "*.csv"), ("Wszystkie", "*.*")]
+            )
+            if not fp:
+                return
+            df = wczytaj_csv(fp, separator=None, wyswietlaj_informacje=True)
+            if df is None:
+                messagebox.showerror("Błąd", "Nie udało się wczytać pliku.")
+                return
+            self.df, self.path = df, fp
+            info.set(f"{fp.split('/')[-1]}  ({len(df)}×{len(df.columns)})")
+            messagebox.showinfo("OK", "Plik wczytany!")
+            if on_success:
+                on_success(df)
 
-    def create_ui(self, parent):
-        frame = super().create_ui(parent)
+        ttk.Button(frm, text="Wczytaj plik CSV", command=choose).pack(side="left")
+        ttk.Label(frm,  textvariable=info).pack(side="left", padx=10)
 
-        # Tabela dla danych numerycznych
-        self.treeview = ttk.Treeview(frame,
-                                     columns=("Średnia", "Mediana", "Min", "Max", "Odchylenie", "Liczba wartości"),
-                                     show="headings")
+    # ──────────────────────────────────────────────────────────────
+    #  PRE-PROCESSING (placeholder)
+    # ──────────────────────────────────────────────────────────────
+    def _load_pre(self) -> None:
+        self._clear_tabs()
+        tab = ttk.Frame(self.nb);  self.nb.add(tab, text="Cleaning")
+        self._add_loader(tab)
+        ttk.Label(tab, text="Tu dodasz narzędzia czyszczenia…",
+                         font=("Helvetica", 11)).pack(padx=20, pady=20)
 
-        self.treeview.pack(padx=10, pady=10, fill="both", expand=True)
+    # ──────────────────────────────────────────────────────────────
+    #  STATYSTYKA
+    # ──────────────────────────────────────────────────────────────
+    def _load_stats(self) -> None:
+        self._clear_tabs()
+        self._build_numeric_stats_tab()
+        self._build_corr_tab()
 
-        # Nagłówki kolumn
-        self.treeview.heading("Średnia", text="Średnia")
-        self.treeview.heading("Mediana", text="Mediana")
-        self.treeview.heading("Min", text="Min")
-        self.treeview.heading("Max", text="Max")
-        self.treeview.heading("Odchylenie", text="Odchylenie")
-        self.treeview.heading("Liczba wartości", text="Liczba wartości")
+    # ---------- Statystyki liczbowe ---------------------------------------
+    def _build_numeric_stats_tab(self) -> None:
+        tab = ttk.Frame(self.nb);  self.nb.add(tab, text="Statystyki liczbowe")
 
-        return frame
+        # lista kolumn numerycznych (aktualizowana po wczytaniu CSV)
+        lbl_cols = ttk.Label(tab, text="Wybierz kolumny (Ctrl+klik):")
+        lbl_cols.pack(anchor="w", padx=10)
 
-    def analyze_data(self, df, selected_columns):
-        """Analizuje dane numeryczne"""
-        results = {}
-        for col in selected_columns:
-            if pd.api.types.is_numeric_dtype(df[col]):
-                results[col] = {
-                    'średnia': df[col].mean(),
-                    'mediana': df[col].median(),
-                    'min': df[col].min(),
-                    'max': df[col].max(),
-                    'odchylenie_std': df[col].std(),
-                    'liczba_wartości': df[col].count()
-                }
-        return results
+        listbox = tk.Listbox(tab, selectmode="multiple", height=6, exportselection=False)
+        listbox.pack(fill="x", padx=10, pady=(0, 10))
 
-    def update_ui(self, results):
-        """Aktualizuje tabelę danymi numerycznymi"""
-        # Czyszczenie tabeli
-        for item in self.treeview.get_children():
-            self.treeview.delete(item)
+        # tabela wyników
+        cols = ("kolumna", "średnia", "mediana", "min", "max", "std", "liczba")
+        tree, ybar, xbar = self._make_treeview(tab, cols)
+        tree.pack(fill="both", expand=True, padx=10, pady=5)
 
-        # Wypełnianie tabeli
-        for kolumna, stats in results.items():
-            self.treeview.insert("", "end", text=kolumna, values=(
-                round(stats['średnia'], 2),
-                round(stats['mediana'], 2),
-                round(stats['min'], 2),
-                round(stats['max'], 2),
-                round(stats['odchylenie_std'], 2),
-                stats['liczba_wartości']
-            ))
+        def update_selector(df: pd.DataFrame) -> None:
+            listbox.delete(0, tk.END)
+            numeric = df.select_dtypes(include=[np.number]).columns
+            for col in numeric:
+                listbox.insert(tk.END, col)
 
+        def run() -> None:
+            if not self.path:
+                messagebox.showwarning("Uwaga", "Najpierw wczytaj plik.")
+                return
+            selection = [listbox.get(i) for i in listbox.curselection()]
+            _, wyniki = analizuj_dane_numeryczne(self.path,
+                                                 wybrane_kolumny=selection or None)
 
-class NonNumericalPanel(AnalysisPanel):
-    def __init__(self):
-        super().__init__("Dane nie-numeryczne")
-        self.treeview = None
+            # odśwież Treeview
+            for row in tree.get_children():
+                tree.delete(row)
+            for kol, staty in wyniki.items():
+                tree.insert("", "end", values=(
+                    kol,
+                    staty["średnia"],
+                    staty["mediana"],
+                    staty["min"],
+                    staty["max"],
+                    staty["odchylenie_std"],
+                    staty["liczba_wartości"]
+                ))
 
-    def create_ui(self, parent):
-        frame = super().create_ui(parent)
+        ttk.Button(tab, text="Oblicz statystyki", command=run)\
+            .pack(anchor="w", padx=10, pady=(0, 6))
 
-        # Tabela dla danych nie-numerycznych
-        self.treeview = ttk.Treeview(frame,
-                                     columns=("Wystąpienia", "Unikalne", "Najczęstsza", "Częstość",
-                                              "Wypełnienie", "Min długość", "Max długość", "Średnia długość"),
-                                     show="headings")
+        # loader + callback, żeby lista kolumn odświeżała się automatycznie
+        self._add_loader(tab, on_success=update_selector)
 
-        self.treeview.pack(padx=10, pady=10, fill="both", expand=True)
+    # ---------- Korelacje -------------------------------------------------
+    # wewnątrz klasy MainApp
+    def _build_corr_tab(self) -> None:
+        """Zakładka 'Korelacje' – macierz Pearsona / Spearmana w Treeview."""
+        import numpy as np
+        tab = ttk.Frame(self.nb)
+        self.nb.add(tab, text="Korelacje")
 
-        # Nagłówki kolumn
-        self.treeview.heading("Wystąpienia", text="Wystąpienia")
-        self.treeview.heading("Unikalne", text="Unikalne")
-        self.treeview.heading("Najczęstsza", text="Najczęstsza")
-        self.treeview.heading("Częstość", text="Częstość")
-        self.treeview.heading("Wypełnienie", text="Wypełnienie")
-        self.treeview.heading("Min długość", text="Min długość")
-        self.treeview.heading("Max długość", text="Max długość")
-        self.treeview.heading("Średnia długość", text="Średnia długość")
+        # ---------- wybór metody ------------
+        method_var = tk.StringVar(value="pearson")
+        frm_select = ttk.Frame(tab);
+        frm_select.pack(anchor="w", padx=10, pady=(0, 8))
+        ttk.Radiobutton(frm_select, text="Pearson", variable=method_var,
+                        value="pearson").pack(side="left")
+        ttk.Radiobutton(frm_select, text="Spearman", variable=method_var,
+                        value="spearman").pack(side="left")
 
-        return frame
+        # ---------- Treeview (początkowo puste) ------------
+        tree, ybar, xbar = self._make_treeview(tab, cols=())
+        tree.pack(fill="both", expand=True, padx=10, pady=5)
 
-    def analyze_data(self, df, selected_columns):
-        """Analizuje dane nie-numeryczne"""
-        results = {}
-        for col in selected_columns:
-            if not pd.api.types.is_numeric_dtype(df[col]):
-                non_null_values = df[col].dropna()
-                value_counts = non_null_values.value_counts()
+        # ---------- akcja 'Oblicz korelacje' ----------
+        def run_corr() -> None:
+            if not self.path:
+                messagebox.showwarning("Uwaga", "Najpierw wczytaj plik CSV.")
+                return
 
-                results[col] = {
-                    'liczba_wystapien': len(non_null_values),
-                    'wartosci_unikalne': len(value_counts),
-                    'najczestsza_wartosc': value_counts.index[0] if not value_counts.empty else None,
-                    'czestotliwosc_najczestszej': value_counts.iloc[0] / len(
-                        non_null_values) if not value_counts.empty else 0,
-                    'procent_wypelnienia': (len(non_null_values) / len(df[col])) * 100,
-                    'dlugosc_min': non_null_values.astype(str).str.len().min() if not non_null_values.empty else 0,
-                    'dlugosc_max': non_null_values.astype(str).str.len().max() if not non_null_values.empty else 0,
-                    'dlugosc_srednia': non_null_values.astype(str).str.len().mean() if not non_null_values.empty else 0
-                }
-        return results
-
-    def update_ui(self, results):
-        """Aktualizuje tabelę danymi nie-numerycznymi"""
-        # Czyszczenie tabeli
-        for item in self.treeview.get_children():
-            self.treeview.delete(item)
-
-        # Wypełnianie tabeli
-        for kolumna, stats in results.items():
-            self.treeview.insert("", "end", text=kolumna, values=(
-                stats['liczba_wystapien'],
-                stats['wartosci_unikalne'],
-                stats['najczestsza_wartosc'],
-                f"{round(stats['czestotliwosc_najczestszej'] * 100, 2)}%",
-                f"{round(stats['procent_wypelnienia'], 2)}%",
-                round(stats['dlugosc_min'], 2),
-                round(stats['dlugosc_max'], 2),
-                round(stats['dlugosc_srednia'], 2)
-            ))
-
-
-class KorelacjaPanel(AnalysisPanel):
-    def __init__(self):
-        super().__init__("Korelacja")
-        self.treeview = None
-        self.method_var = tk.StringVar(value="pearson")
-
-    def create_ui(self, parent):
-        frame = super().create_ui(parent)
-
-        # Wybór metody
-        method_frame = ttk.Frame(frame)
-        method_frame.pack(pady=5)
-
-        tk.Label(method_frame, text="Metoda korelacji:").pack(side="left", padx=5)
-        tk.Radiobutton(method_frame, text="Pearson", variable=self.method_var, value="pearson").pack(side="left",
-                                                                                                     padx=5)
-        tk.Radiobutton(method_frame, text="Spearman", variable=self.method_var, value="spearman").pack(side="left",
-                                                                                                       padx=5)
-
-        # Tabela dla macierzy korelacji
-        self.treeview = ttk.Treeview(frame, show="tree")
-        self.treeview.pack(padx=10, pady=10, fill="both", expand=True)
-
-        # Pionowy scrollbar
-        yscroll = ttk.Scrollbar(frame, orient="vertical", command=self.treeview.yview)
-        yscroll.pack(side="right", fill="y")
-        self.treeview.configure(yscrollcommand=yscroll.set)
-
-        # Poziomy scrollbar
-        xscroll = ttk.Scrollbar(frame, orient="horizontal", command=self.treeview.xview)
-        xscroll.pack(side="bottom", fill="x")
-        self.treeview.configure(xscrollcommand=xscroll.set)
-
-        return frame
-
-    def analyze_data(self, df, selected_columns):
-        """Analizuje korelację wybranych kolumn"""
-        if not selected_columns:
-            return None
-
-        # Filtruj tylko rzeczywiście istniejące i numeryczne kolumny
-        numeric_cols = [col for col in selected_columns if col in df.columns and pd.api.types.is_numeric_dtype(df[col])]
-
-        if len(numeric_cols) < 2:
-            return None
-
-        try:
-            if self.method_var.get() == "pearson":
-                return df[numeric_cols].corr(method='pearson')
+            if method_var.get() == "pearson":
+                df_corr = oblicz_korelacje_pearsona(self.path)
             else:
-                return df[numeric_cols].corr(method='spearman')
-        except Exception as e:
-            print(f"Błąd podczas obliczania korelacji: {str(e)}")
-            return None
+                df_corr = oblicz_korelacje_spearmana(self.path)
 
-    def update_ui(self, results):
-        """Aktualizuje tabelę danymi korelacji"""
-        # Czyszczenie tabeli
-        self.treeview.delete(*self.treeview.get_children())
+            if df_corr is None or df_corr.empty:
+                messagebox.showinfo("Info", "Brak danych numerycznych do korelacji.")
+                return
 
-        # Czyszczenie kolumn
-        for col in self.treeview["columns"]:
-            self.treeview.heading(col, text="")
+            # ---- konfiguracja kolumn Treeview ----
+            cols = ("Variable", *df_corr.columns)  # ← dodatkowa kolumna z lewej
+            tree.config(columns=cols, show="headings")
 
-        if results is None or results.empty:
-            self.treeview.insert("", "end", text="Brak danych numerycznych do analizy korelacji")
-            return
+            tree.heading("Variable", text="Variable")
+            tree.column("Variable", width=130, anchor="w")
 
-        # Ustawienie nowych kolumn
-        columns = list(results.columns)
-        self.treeview["columns"] = columns
+            for col in df_corr.columns:
+                tree.heading(col, text=col)
+                tree.column(col, width=90, anchor="center")
 
-        # Nagłówki kolumn
-        for col in columns:
-            self.treeview.heading(col, text=col)
-            self.treeview.column(col, width=100, anchor="center")
+            # wyczyść stare wiersze
+            tree.delete(*tree.get_children())
 
-        # Wypełnianie tabeli
-        for row_name, row_data in results.iterrows():
-            values = [round(row_data[col], 4) for col in columns]
-            self.treeview.insert("", "end", text=row_name, values=tuple(values))
+            # dodaj nowe wiersze (nazwa wiersza + wartości)
+            for row_name, values in df_corr.iterrows():
+                tree.insert(
+                    "", "end",
+                    values=(row_name, *np.round(values.values, 4))
+                )
 
+        ttk.Button(tab, text="Oblicz korelacje", command=run_corr) \
+            .pack(anchor="w", padx=10, pady=(0, 6))
 
-class MainWindow:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Analizator Danych")
-        self.root.geometry("1000x700")
+        # ---------- loader pliku CSV ----------
+        self._add_loader(tab)  # przycisk 'Wczytaj plik CSV'
 
-        # Zmienne
-        self.separator_var = tk.StringVar(value=",")
-        self.file_path = tk.StringVar()
-        self.panels = []
-        self.df = None
+    # ──────────────────────────────────────────────────────────────
+    #  Pomocnicze
+    # ──────────────────────────────────────────────────────────────
+    def _make_treeview(self, parent, cols):
+        """Zwraca Treeview + h/v scrollbary."""
+        ybar = ttk.Scrollbar(parent, orient="vertical")
+        xbar = ttk.Scrollbar(parent, orient="horizontal")
+        tree = ttk.Treeview(parent, columns=cols, show="headings",
+                            yscrollcommand=ybar.set, xscrollcommand=xbar.set)
+        ybar.config(command=tree.yview); xbar.config(command=tree.xview)
+        ybar.pack(side="right", fill="y"); xbar.pack(side="bottom", fill="x")
+        if cols:
+            for c in cols:
+                tree.heading(c, text=c)
+                tree.column(c, width=100, anchor="center")
+        return tree, ybar, xbar
 
-        # Inicjalizacja UI
-        self.create_ui()
-
-        # Rejestracja paneli
-        self.register_panel(NumericalPanel())
-        self.register_panel(NonNumericalPanel())
-        self.register_panel(KorelacjaPanel())
-
-    def create_ui(self):
-        """Tworzy interfejs użytkownika"""
-        # Panel zakładek
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(pady=10, expand=True, fill="both")
-
-        # Panel wejścia
-        wejscie_frame = ttk.Frame(self.root)
-        wejscie_frame.pack(pady=10)
-
-        # Ścieżka do pliku
-        label_sciezka = tk.Label(wejscie_frame, text="Ścieżka do pliku CSV:")
-        label_sciezka.grid(row=0, column=0, padx=5)
-
-        self.entry_sciezka = tk.Entry(wejscie_frame, width=50, textvariable=self.file_path)
-        self.entry_sciezka.grid(row=0, column=1, padx=5)
-
-        button_otworz_plik = tk.Button(wejscie_frame, text="Wybierz plik", command=self.otworz_plik)
-        button_otworz_plik.grid(row=0, column=2, padx=5)
-
-        # Radio buttons do wyboru separatora
-        radio_frame = ttk.Frame(wejscie_frame)
-        radio_frame.grid(row=1, column=0, columnspan=3, pady=5)
-
-        tk.Label(radio_frame, text="Separator:").pack(side="left", padx=5)
-        tk.Radiobutton(radio_frame, text="Auto", variable=self.separator_var, value="auto").pack(side="left", padx=5)
-        tk.Radiobutton(radio_frame, text="Przecinek (,)", variable=self.separator_var, value=",").pack(side="left",
-                                                                                                       padx=5)
-        tk.Radiobutton(radio_frame, text="Średnik (;)", variable=self.separator_var, value=";").pack(side="left",
-                                                                                                     padx=5)
-        tk.Radiobutton(radio_frame, text="Tabulator", variable=self.separator_var, value="\t").pack(side="left", padx=5)
-
-        # Lista kolumn do wyboru
-        label_wybierz_kolumny = tk.Label(self.root, text="Wybierz kolumny do analizy:")
-        label_wybierz_kolumny.pack(pady=5)
-
-        self.listbox_kolumny = tk.Listbox(self.root, selectmode=tk.MULTIPLE, height=5)
-        self.listbox_kolumny.pack()
-
-        # Przycisk analizy
-        button_analizuj = tk.Button(self.root, text="Analizuj dane", command=self.wykonaj_analize)
-        button_analizuj.pack(pady=10)
-
-    def register_panel(self, panel):
-        """Rejestruje nowy panel analizy"""
-        self.panels.append(panel)
-        panel_frame = panel.create_ui(self.notebook)
-        self.notebook.add(panel_frame, text=panel.name)
-
-    def wykryj_separator(self, sciezka_pliku):
-        """Wykrywa separator w pliku CSV z dodatkową walidacją"""
-        try:
-            with open(sciezka_pliku, "r") as f:
-                sample = f.read(1024)
-            sniffer = csv.Sniffer()
-            delimiter = sniffer.sniff(sample).delimiter
-
-            # Dodatkowa walidacja: jeśli zawiera średniki i nie został wykryty separator
-            if ';' in sample.split('\n')[0] and delimiter != ';':
-                return ';'
-            return delimiter
-        except:
-            # Domyślny separator, jeśli auto-wykrywanie nie działa
-            return ";"
-
-    def otworz_plik(self):
-        sciezka_pliku = filedialog.askopenfilename(
-            title="Wybierz plik CSV",
-            filetypes=[("Pliki CSV", "*.csv"), ("Wszystkie pliki", "*.*")]
-        )
-        if sciezka_pliku:
-            self.file_path.set(sciezka_pliku)
-
-            separator = self.separator_var.get()
-            if separator == "auto":
-                try:
-                    separator = self.wykryj_separator(sciezka_pliku)
-                except Exception as e:
-                    messagebox.showerror("Błąd", f"Nie można wykryć separatora: {str(e)}")
-                    return
-
-            try:
-                self.df = pd.read_csv(sciezka_pliku, sep=separator, encoding='utf-8-sig')
-                self.listbox_kolumny.delete(0, tk.END)
-                for kolumna in self.df.columns:
-                    self.listbox_kolumny.insert(tk.END, kolumna)
-            except Exception as e:
-                messagebox.showerror("Błąd", f"Błąd podczas wczytywania pliku: {str(e)}")
-
-    def wykonaj_analize(self):
-        """Uruchamia analizę danych"""
-        sciezka_pliku = self.file_path.get()
-        if not sciezka_pliku:
-            messagebox.showerror("Błąd", "Nie wybrano pliku CSV.")
-            return
-
-        separator = self.separator_var.get()
-        if separator == "auto":
-            separator = self.wykryj_separator(sciezka_pliku)
-
-        # Pobierz wybrane kolumny
-        selected_indices = self.listbox_kolumny.curselection()
-        selected_columns = [self.listbox_kolumny.get(i) for i in selected_indices]
-
-        if not selected_columns:
-            messagebox.showwarning("Ostrzeżenie", "Nie wybrano żadnych kolumn do analizy.")
-            return
-
-        # Załaduj dane
-        try:
-            self.df = pd.read_csv(sciezka_pliku, sep=separator)
-        except Exception as e:
-            messagebox.showerror("Błąd", f"Błąd podczas wczytywania pliku: {str(e)}")
-            return
-
-        # Analizuj dane dla każdego panelu
-        for panel in self.panels:
-            results = panel.analyze_data(self.df, selected_columns)
-            panel.update_ui(results)
+    def _clear_tabs(self) -> None:
+        for tab in self.nb.tabs():
+            self.nb.forget(tab)
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = MainWindow(root)
-    root.mainloop()
+    MainApp().mainloop()
