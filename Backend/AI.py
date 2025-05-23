@@ -12,8 +12,8 @@ from sklearn.metrics import accuracy_score, f1_score
 
 # === PARAMETRY ===
 CSV_PATH   = "student-mat.csv"   # ← podaj ścieżkę do pliku CSV
-TARGET_COL = "age"                     # ← podaj nazwę kolumny z etykietą
-TEST_SIZE  = 0.8
+TARGET_COL = "Pstatus"                     # ← podaj nazwę kolumny z etykietą
+TEST_SIZE  = 0.7
 RANDOM_SEED = 42
 
 def read_csv_auto(path: str) -> pd.DataFrame:
