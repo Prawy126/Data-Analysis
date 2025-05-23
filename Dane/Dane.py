@@ -15,9 +15,9 @@ def wczytaj_csv(
 ) -> Optional[pd.DataFrame]:
     """
     Ulepszona i zoptymalizowana funkcja do automatycznego wczytywania CSV
-    - Domyślnie używa silnika 'c', fallback na 'python'
-    - Dla dużych plików (>100MB) czyta w chunkach
-    - Random sampling (max 1000 wierszy) do detekcji typów
+    - Używa pyarrow (jeśli możliwe) dla mniejszego zużycia RAM
+    - Chunk-reading powyżej 100MB
+    - Automatyczna detekcja typów (1x!)
     """
     try:
         if wyswietlaj_informacje:
@@ -26,11 +26,11 @@ def wczytaj_csv(
         if not os.path.exists(sciezka_pliku):
             raise FileNotFoundError(f"Plik nie istnieje: {sciezka_pliku}")
 
-        # Detekcja kodowania i separatora
         kodowanie = _wykryj_kodowanie(sciezka_pliku)
         if wyswietlaj_informacje:
             print(f"Kodowanie: {kodowanie}")
 
+        # Ulepszone wykrycie separatora
         if separator is None:
             separator = _wykryj_separator(sciezka_pliku, kodowanie)
             if wyswietlaj_informacje:
@@ -48,75 +48,72 @@ def wczytaj_csv(
             if wyswietlaj_informacje:
                 print(f"Wybrany separator z listy: '{separator}'")
 
-        # Parametry do czytania
         filesize = os.path.getsize(sciezka_pliku)
-        csv_params = {'sep': separator, 'encoding': kodowanie}
+        csv_params = {'sep': separator, 'encoding': kodowanie, 'on_bad_lines': 'warn'}
+        # Użyj pyarrow, jeśli jest dostępny i pandas >= 2.1
+        try:
+            pd_ver = tuple(map(int, pd.__version__.split(".")[:2]))
+            if pd_ver >= (2,1):
+                csv_params['dtype_backend'] = "pyarrow"
+        except Exception:
+            pass
 
-        # Czytanie w chunkach, jeśli plik duży
-        if filesize > 100 * 1024 * 1024:  # >100MB
+        # Czytanie dużych plików na chunkach
+        if filesize > 100 * 1024 * 1024:
             chunk_size = 100_000
-            csv_params.update({'engine': 'c', 'on_bad_lines': 'warn'})
+            chunks = []
             try:
-                reader = pd.read_csv(sciezka_pliku, chunksize=chunk_size, **csv_params)
+                for c in pd.read_csv(sciezka_pliku, chunksize=chunk_size, engine='c', **csv_params):
+                    c = _automatyczna_detekcja_typow(c, kolumny_daty, format_daty, wyswietlaj_informacje)
+                    c = _optymalizuj_pamiec(c)
+                    chunks.append(c)
             except Exception:
-                csv_params.update({'engine': 'python', 'on_bad_lines': 'skip'})
-                reader = pd.read_csv(sciezka_pliku, chunksize=chunk_size, **csv_params)
-            df = pd.concat(reader, ignore_index=True)
+                for c in pd.read_csv(sciezka_pliku, chunksize=chunk_size, engine='python', on_bad_lines="skip", **csv_params):
+                    c = _automatyczna_detekcja_typow(c, kolumny_daty, format_daty, wyswietlaj_informacje)
+                    c = _optymalizuj_pamiec(c)
+                    chunks.append(c)
+            df = pd.concat(chunks, ignore_index=True)
         else:
-            csv_params.update({'engine': 'c', 'on_bad_lines': 'warn'})
             try:
-                df = pd.read_csv(sciezka_pliku, **csv_params)
+                df = pd.read_csv(sciezka_pliku, engine='c', **csv_params)
             except Exception:
-                csv_params.update({'engine': 'python', 'on_bad_lines': 'skip'})
-                df = pd.read_csv(sciezka_pliku, **csv_params)
-
-        # Czyszczenie nagłówków
-        df.columns = [col.strip().replace('\ufeff', '') for col in df.columns]
-        df.columns = df.columns.str.replace(r"[\'\\]", '', regex=True)
-
-        # Sprawdzenie wymaganych kolumn
-        if wymagane_kolumny:
-            brakujace = set(wymagane_kolumny) - set(df.columns)
-            if brakujace:
-                raise ValueError(f"Brakujące wymagane kolumny: {brakujace}")
-            df = df.dropna(subset=wymagane_kolumny)
-
-        # Automatyczna detekcja i konwersja typów
-        df = _automatyczna_detekcja_typow(df, kolumny_daty, format_daty, wyswietlaj_informacje)
-
-        # Optymalizacja pamięci
-        df = _optymalizuj_pamiec(df)
+                df = pd.read_csv(sciezka_pliku, engine='python', on_bad_lines="skip", **csv_params)
+            # Czyszczenie nagłówków
+            df.columns = [col.strip().replace('\ufeff', '') for col in df.columns]
+            df.columns = df.columns.str.replace(r"[\'\\]", '', regex=True)
+            if wymagane_kolumny:
+                brakujace = set(wymagane_kolumny) - set(df.columns)
+                if brakujace:
+                    raise ValueError(f"Brakujące wymagane kolumny: {brakujace}")
+                df = df.dropna(subset=wymagane_kolumny)
+            # Automatyczna detekcja typów, optymalizacja pamięci
+            df = _automatyczna_detekcja_typow(df, kolumny_daty, format_daty, wyswietlaj_informacje)
+            df = _optymalizuj_pamiec(df)
 
         if wyswietlaj_informacje:
             print(f"[SUKCES] Wierszy: {len(df)}, Kolumny: {df.columns.tolist()}")
         return df
 
-    except FileNotFoundError as e:
-        print(f"[BŁĄD] {e}")
-        return None
     except Exception as e:
         print(f"[BŁĄD] {e}")
         return None
-
 
 def _automatyczna_detekcja_typow(df: pd.DataFrame,
                                  kolumny_daty: List[str] = None,
                                  format_daty: str = None,
                                  wyswietlaj: bool = False) -> pd.DataFrame:
     """
-    Detekcja typów z losowym próbkowaniem (max 1000 wierszy)
+    Ulepszona automatyczna detekcja typów z próbkowaniem.
     """
     df_copy = df.copy()
-    # Losowa próbka dla detekcji
-    n = min(len(df_copy), 1000)
-    df_sample = df_copy.sample(n=n, random_state=42) if n > 0 else df_copy
+    sample = df_copy.sample(n=min(len(df_copy), 1000), random_state=42) if len(df_copy) > 0 else df_copy
 
-    # Konwersja kolumn dat
+    # Najpierw konwertuj podane kolumny dat
     if kolumny_daty:
         for col in kolumny_daty:
             if col in df_copy.columns:
                 try:
-                    fmt = format_daty or _wykryj_format_daty(df_sample[col])
+                    fmt = format_daty or _wykryj_format_daty(sample[col])
                     df_copy[col] = pd.to_datetime(df_copy[col], format=fmt, errors='coerce')
                     if wyswietlaj:
                         print(f"Data [{col}] użyty format: {fmt}")
@@ -127,31 +124,28 @@ def _automatyczna_detekcja_typow(df: pd.DataFrame,
     for col in df_copy.columns:
         if kolumny_daty and col in kolumny_daty:
             continue
-        sample = df_sample[col].dropna().astype(str)
-
+        s = sample[col].dropna().astype(str)
         # Numeryczne
-        if _czy_kolumna_numeryczna(sample):
-            sep = _wykryj_separator_dziesietny(sample)
+        if _czy_kolumna_numeryczna(s):
+            sep = _wykryj_separator_dziesietny(s)
             df_copy[col] = _konwertuj_na_liczbe(df_copy[col], sep)
             if wyswietlaj:
                 print(f"Numeryczna: {col}")
             continue
-
         # Daty
-        if _czy_kolumna_zawiera_daty(sample):
-            fmt = _wykryj_format_daty(sample)
+        if _czy_kolumna_zawiera_daty(s):
+            fmt = _wykryj_format_daty(s)
             df_copy[col] = pd.to_datetime(df_copy[col], format=fmt, errors='coerce')
             if wyswietlaj:
                 print(f"Data wykryta: {col} (format: {fmt})")
             continue
-
         # Kategorie
-        if _czy_kolumna_kategorialna(sample):
+        if _czy_kolumna_kategorialna(s):
             df_copy[col] = df_copy[col].astype('category')
             if wyswietlaj:
                 print(f"Kategoria: {col}")
-
     return df_copy
+
 
 
 
@@ -452,21 +446,18 @@ def _czy_kolumna_kategorialna(kolumna: pd.Series) -> bool:
 
 
 def _optymalizuj_pamiec(df: pd.DataFrame) -> pd.DataFrame:
-    """Ulepszona optymalizacja zużycia pamięci"""
     # Liczby zmiennoprzecinkowe
     for col in df.select_dtypes(include=['float64']).columns:
         try:
             df[col] = pd.to_numeric(df[col], downcast='float')
         except:
             pass
-
     # Liczby całkowite
     for col in df.select_dtypes(include=['int64']).columns:
         try:
             df[col] = pd.to_numeric(df[col], downcast='integer')
         except:
             pass
-
     # Kategorie
     for col in df.select_dtypes(include=['object']).columns:
         try:
@@ -474,8 +465,8 @@ def _optymalizuj_pamiec(df: pd.DataFrame) -> pd.DataFrame:
                 df[col] = df[col].astype('category')
         except:
             pass
-
     return df
+
 
 
 # Funkcja pomocnicza do analizy pliku CSV
