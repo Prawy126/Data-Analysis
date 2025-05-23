@@ -1,6 +1,5 @@
 import pandas as pd
-import numpy as np
-from typing import Optional, List, Dict, Union
+from typing import Optional, List, Union
 import re
 import os
 from datetime import datetime

@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Optional, Dict, List, Union
+from typing import Optional, Dict, List, Union, Any
 
 from Dane.Dane import _optymalizuj_pamiec, wczytaj_csv
 
@@ -8,8 +8,9 @@ from Dane.Dane import _optymalizuj_pamiec, wczytaj_csv
 def minmax_scaler(
         df: pd.DataFrame,
         kolumny: Optional[List[str]] = None,
-        wyswietlaj_informacje: bool = True
-) -> Dict[str, pd.DataFrame]:
+        wyswietlaj_informacje: bool = True,
+        zwroc_tylko_dane: bool = False
+) -> Union[pd.DataFrame, Dict[str, Any]]:
     """
     Skaluje wybrane kolumny numeryczne do zakresu [0, 1] metodą MinMax.
 
@@ -21,11 +22,14 @@ def minmax_scaler(
         Lista kolumn do skalowania. Jeśli None, skalowane są wszystkie kolumny numeryczne.
     wyswietlaj_informacje : bool
         Czy wyświetlać informacje diagnostyczne.
+    zwroc_tylko_dane : bool
+        Jeśli True, zwraca tylko przeskalowany DataFrame zamiast słownika z dodatkowymi informacjami.
 
     Zwraca:
     -------
-    Dict[str, pd.DataFrame]
-        Słownik z kluczami:
+    Union[pd.DataFrame, Dict[str, Any]]
+        Jeśli zwroc_tylko_dane=True: przeskalowany DataFrame
+        W przeciwnym razie: słownik z kluczami:
         - 'df_scaled': przeskalowany DataFrame
         - 'skale': informacje o min/max użyte do skalowania {'kolumna': (min, max)}
     """
@@ -63,23 +67,31 @@ def minmax_scaler(
         # Optymalizacja pamięci
         wynik_df = _optymalizuj_pamiec(wynik_df)
 
-        return {
-            'df_scaled': wynik_df,
-            'skale': skale
-        }
+        # Zwróć tylko DataFrame lub pełny słownik z informacjami
+        if zwroc_tylko_dane:
+            return wynik_df
+        else:
+            return {
+                'df_scaled': wynik_df,
+                'skale': skale
+            }
 
     except Exception as e:
         print(f"[BŁĄD] Błąd podczas skalowania: {str(e)}")
         import traceback
         print(traceback.format_exc())
-        return {'df_scaled': df, 'skale': {}}
+        if zwroc_tylko_dane:
+            return df
+        else:
+            return {'df_scaled': df, 'skale': {}}
 
 
 def standard_scaler(
         df: pd.DataFrame,
         kolumny: Optional[List[str]] = None,
-        wyswietlaj_informacje: bool = True
-) -> Dict[str, Union[pd.DataFrame, Dict[str, float]]]:
+        wyswietlaj_informacje: bool = True,
+        zwroc_tylko_dane: bool = False
+) -> Union[pd.DataFrame, Dict[str, Any]]:
     """
     Standaryzuje wybrane kolumny numeryczne do średniej 0 i wariancji 1 metodą StandardScaler.
 
@@ -91,13 +103,16 @@ def standard_scaler(
         Lista kolumn do standaryzacji. Jeśli None, standaryzowane są wszystkie kolumny numeryczne.
     wyswietlaj_informacje : bool
         Czy wyświetlać informacje diagnostyczne.
+    zwroc_tylko_dane : bool
+        Jeśli True, zwraca tylko przeskalowany DataFrame zamiast słownika z dodatkowymi informacjami.
 
     Zwraca:
     -------
-    Dict[str, Union[pd.DataFrame, Dict[str, float]]]
-        Słownik z kluczami:
+    Union[pd.DataFrame, Dict[str, Any]]
+        Jeśli zwroc_tylko_dane=True: przeskalowany DataFrame
+        W przeciwnym razie: słownik z kluczami:
         - 'df_scaled': przestandaryzowany DataFrame
-        - 'skale': informacje o średniej i odchyleniu (format: {'kolumna': {'mean': X, 'std': Y}})
+        - 'skale': DataFrame z informacjami o średniej i odchyleniu
     """
     try:
         wynik_df = df.copy()
@@ -112,7 +127,12 @@ def standard_scaler(
         if not kolumny_numeryczne:
             raise ValueError("Brak kolumn numerycznych do standaryzacji.")
 
-        skale = {}
+        # Utworzenie DataFrame'a na informacje o skalowaniu
+        skale = pd.DataFrame(
+            columns=['mean', 'std'],
+            index=kolumny_numeryczne,
+            dtype='float64'
+        )
 
         for kolumna in kolumny_numeryczne:
             srednia = wynik_df[kolumna].mean()
@@ -124,7 +144,7 @@ def standard_scaler(
                 continue
 
             wynik_df[kolumna] = (wynik_df[kolumna] - srednia) / std
-            skale[kolumna] = {'mean': srednia, 'std': std}
+            skale.loc[kolumna] = [srednia, std]
 
             if wyswietlaj_informacje:
                 print(f"[INFO] Standaryzowano kolumnę '{kolumna}'")
@@ -133,16 +153,23 @@ def standard_scaler(
         # Optymalizacja pamięci po standaryzacji
         wynik_df = _optymalizuj_pamiec(wynik_df)
 
-        return {
-            'df_scaled': wynik_df,
-            'skale': skale
-        }
+        # Zwróć tylko DataFrame lub pełny słownik z informacjami
+        if zwroc_tylko_dane:
+            return wynik_df
+        else:
+            return {
+                'df_scaled': wynik_df,
+                'skale': skale
+            }
 
     except Exception as e:
         print(f"[BŁĄD] Błąd podczas standaryzacji: {str(e)}")
         import traceback
         print(traceback.format_exc())
-        return {'df_scaled': df, 'skale': {}}
+        if zwroc_tylko_dane:
+            return df
+        else:
+            return {'df_scaled': df, 'skale': pd.DataFrame()}
 
 # 1. Wczytaj dane
 df = wczytaj_csv(
