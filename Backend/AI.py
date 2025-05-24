@@ -1,115 +1,98 @@
-# run_classifier.py
-import os, sys, itertools
+import sys
 import pandas as pd
+from sklearn.cluster import KMeans
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, silhouette_score
 
-# Jeżeli chcesz użyć własnego skalera, odkomentuj poniżej:
-# from Backend.Skalowanie import standard_scaler
+from Backend.Skalowanie import standard_scaler
+from Dane.Dane import wczytaj_csv
 
-# === PARAMETRY ===
-CSV_PATH   = "student-mat.csv"   # ← podaj ścieżkę do pliku CSV
-TARGET_COL = "Pstatus"                     # ← podaj nazwę kolumny z etykietą
-TEST_SIZE  = 0.7
+CSV_PATH = "student-mat.csv"
+TARGET_COL = "Pstatus"
 RANDOM_SEED = 42
 
-def read_csv_auto(path: str) -> pd.DataFrame:
-    if not os.path.isfile(path):
-        sys.exit(f"[ERR] Nie znaleziono pliku: {path}")
 
-    encodings   = ["utf-8", "cp1250", "latin-1"]
-    separators  = [",", ";", "\t", "|"]
-
-    best_df, best_cols = None, 0
-    for enc, sep in itertools.product(encodings, separators):
-        try:
-            df_try = pd.read_csv(path, sep=sep, encoding=enc,
-                                 engine="python", on_bad_lines="skip", nrows=200)
-            if df_try.shape[1] > best_cols:
-                best_cols, best_df, best_enc, best_sep = df_try.shape[1], df_try, enc, sep
-        except Exception:
-            continue
-
-    if best_df is None or best_cols == 1:
-        sys.exit("[ERR] Nie udało się poprawnie odczytać CSV – sprawdź separator lub plik.")
-
-    full_df = pd.read_csv(path, sep=best_sep, encoding=best_enc,
-                          engine="python", on_bad_lines="skip")
-    print(f"[INFO] Użyty separator '{best_sep}', kodowanie '{best_enc}', "
-          f"kształt: {full_df.shape}")
-    return full_df
-
-def classify(X: pd.DataFrame, y: pd.Series,
-             test_size=0.2, seed=42) -> dict:
+def classify_and_return_predictions(X, y, test_size=0.3, random_state=42):
     X_enc = pd.get_dummies(X, drop_first=True)
+    X_scaled = standard_scaler(X_enc, zwroc_tylko_dane=True)
 
-    # --- Skalowanie numerycznych (sklearn StandardScaler):
-    scaler = StandardScaler()
-    X_scaled = pd.DataFrame(
-        scaler.fit_transform(X_enc),
-        columns=X_enc.columns,
-        index=X_enc.index
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_scaled, y, test_size=test_size, random_state=random_state, stratify=y
     )
-
-    # Jeśli chcesz użyć własnego skalera, zamień powyższe na:
-    # X_scaled = standard_scaler(X_enc, zwroc_tylko_dane=True)
-
-    # --- USUŃ KLASY Z JEDNYM WYSTĄPIENIEM
-    value_counts = y.value_counts()
-    valid_classes = value_counts[value_counts > 1].index
-    mask = y.isin(valid_classes)
-    y = y[mask]
-    X_scaled = X_scaled.loc[y.index]
-
-    if y.nunique() < 2:
-        sys.exit("[ERR] Po usunięciu rzadkich klas pozostała tylko jedna klasa! "
-                 "Nie można przeprowadzić klasyfikacji.")
-
-    X_tr, X_te, y_tr, y_te = train_test_split(
-        X_scaled, y, test_size=test_size,
-        random_state=seed, stratify=y
-    )
-
-    results = {}
 
     lr = LogisticRegression(max_iter=1000)
-    lr.fit(X_tr, y_tr)
-    y_pred = lr.predict(X_te)
-    results["logreg"] = {
-        "accuracy": round(accuracy_score(y_te, y_pred), 4),
-        "f1":       round(f1_score(y_te, y_pred, average="weighted"), 4)
+    dt = DecisionTreeClassifier(random_state=random_state)
+
+    lr.fit(X_train, y_train)
+    dt.fit(X_train, y_train)
+
+    y_pred_lr = lr.predict(X_scaled)
+    y_pred_dt = dt.predict(X_scaled)
+
+    y_test_pred_lr = lr.predict(X_test)
+    y_test_pred_dt = dt.predict(X_test)
+
+    print("\n=== WYNIKI KLASYFIKACJI (test set) ===")
+    print(f"logreg ➜ acc: {accuracy_score(y_test, y_test_pred_lr):.4f}, f1: {f1_score(y_test, y_test_pred_lr, average='weighted'):.4f}")
+    print(f"dtree  ➜ acc: {accuracy_score(y_test, y_test_pred_dt):.4f}, f1: {f1_score(y_test, y_test_pred_dt, average='weighted'):.4f}")
+
+    preds_df = X.copy()
+    preds_df["true_label"] = y
+    preds_df["logreg_pred"] = y_pred_lr
+    preds_df["dtree_pred"] = y_pred_dt
+
+    return preds_df
+
+
+def cluster_kmeans(X: pd.DataFrame, n_clusters: int = 4, seed: int = RANDOM_SEED):
+    """
+    Zwraca:
+      - DataFrame z kolumną 'cluster' (etykieta przypisana przez KMeans)
+      - słownik metryk (inertia, silhouette)
+    """
+    X_enc = pd.get_dummies(X, drop_first=True)
+    X_scaled = standard_scaler(X_enc, zwroc_tylko_dane=True)
+
+    km = KMeans(n_clusters=n_clusters, random_state=seed, n_init="auto")
+    labels = pd.Series(km.fit_predict(X_scaled), index=X.index, name="cluster")
+
+    metrics = {
+        "inertia": km.inertia_,
+        "silhouette": silhouette_score(X_scaled, labels) if n_clusters > 1 else None
     }
 
-    dt = DecisionTreeClassifier(random_state=seed)
-    dt.fit(X_tr, y_tr)
-    y_pred = dt.predict(X_te)
-    results["dtree"] = {
-        "accuracy": round(accuracy_score(y_te, y_pred), 4),
-        "f1":       round(f1_score(y_te, y_pred, average="weighted"), 4)
-    }
-    return results
+    df_with_clusters = X.copy()
+    df_with_clusters["cluster"] = labels
 
-# ---------------- MAIN ----------------
+    return df_with_clusters, metrics
+
+
+# ===== MAIN TEST =====
 if __name__ == "__main__":
-    df = read_csv_auto(CSV_PATH)
+    df_full = wczytaj_csv(CSV_PATH, wyswietlaj_informacje=True)
 
-    if TARGET_COL not in df.columns:
-        sys.exit(f"[ERR] Kolumna etykiety '{TARGET_COL}' nie istnieje.\n"
-                 f"Dostępne kolumny: {list(df.columns)[:20]} …")
+    if TARGET_COL not in df_full.columns:
+        sys.exit(f"[ERR] Kolumna '{TARGET_COL}' nie istnieje w danych.")
 
-    df = df.dropna(subset=[TARGET_COL])
-    y  = df[TARGET_COL]
-    X  = df.drop(columns=[TARGET_COL])
+    df_full = df_full.dropna(subset=[TARGET_COL])
+    y = df_full[TARGET_COL]
+    X = df_full.drop(columns=[TARGET_COL])
 
-    # Zakoduj etykiety tekstowe na liczby (np. "A", "B", "C" → 0,1,2)
     if y.dtype == object or str(y.dtype).startswith("category"):
         y = y.astype("category").cat.codes
 
-    res = classify(X, y, test_size=TEST_SIZE, seed=RANDOM_SEED)
+    # --- klasyfikacja
+    preds = classify_and_return_predictions(X, y)
 
-    print("\n=== WYNIKI KLASYFIKACJI ===")
-    for m, met in res.items():
-        print(f"{m:6s} ➜ acc: {met['accuracy']:.4f}, f1: {met['f1']:.4f}")
+    # --- klasteryzacja
+    df_with_clusters, metrics = cluster_kmeans(X, n_clusters=4)
+    preds["cluster"] = df_with_clusters["cluster"]
+
+    print("\n=== KMEANS (k=4) metryki ===")
+    print(f"Inertia:    {metrics['inertia']:.2f}")
+    print(f"Silhouette: {metrics['silhouette']:.4f}" if metrics["silhouette"] else "Silhouette: brak")
+
+    print("\n=== PODGLĄD WYNIKOWEGO DATAFRAME (z predykcjami i klastrem) ===")
+    print(preds.head(10).to_string(index=False))

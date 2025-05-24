@@ -93,83 +93,40 @@ def standard_scaler(
         zwroc_tylko_dane: bool = False
 ) -> Union[pd.DataFrame, Dict[str, Any]]:
     """
-    Standaryzuje wybrane kolumny numeryczne do średniej 0 i wariancji 1 metodą StandardScaler.
-
-    Parametry:
-    ---------
-    df : pd.DataFrame
-        Wejściowy DataFrame z danymi.
-    kolumny : List[str], opcjonalnie
-        Lista kolumn do standaryzacji. Jeśli None, standaryzowane są wszystkie kolumny numeryczne.
-    wyswietlaj_informacje : bool
-        Czy wyświetlać informacje diagnostyczne.
-    zwroc_tylko_dane : bool
-        Jeśli True, zwraca tylko przeskalowany DataFrame zamiast słownika z dodatkowymi informacjami.
-
-    Zwraca:
-    -------
-    Union[pd.DataFrame, Dict[str, Any]]
-        Jeśli zwroc_tylko_dane=True: przeskalowany DataFrame
-        W przeciwnym razie: słownik z kluczami:
-        - 'df_scaled': przestandaryzowany DataFrame
-        - 'skale': DataFrame z informacjami o średniej i odchyleniu
+    Standaryzuje kolumny numeryczne do średniej 0 i odchylenia 1.
     """
-    try:
-        wynik_df = df.copy()
+    if df is None:
+        raise ValueError("Nie podano DataFrame do skalowania")
 
-        # Wybór kolumn do standaryzacji
-        if kolumny is None:
-            kolumny_numeryczne = wynik_df.select_dtypes(include=[np.number]).columns.tolist()
-        else:
-            kolumny_numeryczne = [col for col in kolumny if col in wynik_df.columns and
-                                  pd.api.types.is_numeric_dtype(wynik_df[col])]
+    wynik_df = df.copy()
+    # wybór kolumn
+    if kolumny is None:
+        kolumny_num = wynik_df.select_dtypes(include=[np.number]).columns.tolist()
+    else:
+        kolumny_num = [c for c in kolumny if c in wynik_df.columns and pd.api.types.is_numeric_dtype(wynik_df[c])]
 
-        if not kolumny_numeryczne:
-            raise ValueError("Brak kolumn numerycznych do standaryzacji.")
+    if not kolumny_num:
+        raise ValueError("Brak kolumn numerycznych do standaryzacji")
 
-        # Utworzenie DataFrame'a na informacje o skalowaniu
-        skale = pd.DataFrame(
-            columns=['mean', 'std'],
-            index=kolumny_numeryczne,
-            dtype='float64'
-        )
-
-        for kolumna in kolumny_numeryczne:
-            srednia = wynik_df[kolumna].mean()
-            std = wynik_df[kolumna].std()
-
-            if std == 0:
-                if wyswietlaj_informacje:
-                    print(f"[UWAGA] Kolumna '{kolumna}' ma zerowe odchylenie — zostanie pominięta.")
-                continue
-
-            wynik_df[kolumna] = (wynik_df[kolumna] - srednia) / std
-            skale.loc[kolumna] = [srednia, std]
-
+    skale = pd.DataFrame(index=kolumny_num, columns=['mean','std'], dtype=float)
+    for c in kolumny_num:
+        μ = wynik_df[c].mean()
+        σ = wynik_df[c].std()
+        if σ == 0:
             if wyswietlaj_informacje:
-                print(f"[INFO] Standaryzowano kolumnę '{kolumna}'")
-                print(f"  Średnia: {srednia:.4f}, Odchylenie: {std:.4f}")
+                print(f"[UWAGA] {c}: stała wartość, pomijam")
+            continue
+        wynik_df[c] = (wynik_df[c] - μ) / σ
+        skale.loc[c] = [μ,σ]
+        if wyswietlaj_informacje:
+            print(f"[INFO] Standaryzowano {c}: mean={μ:.4f}, std={σ:.4f}")
 
-        # Optymalizacja pamięci po standaryzacji
-        wynik_df = _optymalizuj_pamiec(wynik_df)
+    wynik_df = _optymalizuj_pamiec(wynik_df)
 
-        # Zwróć tylko DataFrame lub pełny słownik z informacjami
-        if zwroc_tylko_dane:
-            return wynik_df
-        else:
-            return {
-                'df_scaled': wynik_df,
-                'skale': skale
-            }
+    if zwroc_tylko_dane:
+        return wynik_df
+    return {'df_scaled': wynik_df, 'skale': skale}
 
-    except Exception as e:
-        print(f"[BŁĄD] Błąd podczas standaryzacji: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
-        if zwroc_tylko_dane:
-            return df
-        else:
-            return {'df_scaled': df, 'skale': pd.DataFrame()}
 
 # 1. Wczytaj dane
 df = wczytaj_csv(

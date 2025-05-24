@@ -14,89 +14,75 @@ def wczytaj_csv(
         wyswietlaj_informacje: bool = False
 ) -> Optional[pd.DataFrame]:
     """
-    Ulepszona i zoptymalizowana funkcja do automatycznego wczytywania CSV
-    - Używa pyarrow (jeśli możliwe) dla mniejszego zużycia RAM
-    - Chunk-reading powyżej 100MB
-    - Automatyczna detekcja typów (1x!)
+    Ulepszona funkcja do automatycznego wczytywania CSV.
     """
-    try:
-        if wyswietlaj_informacje:
-            print(f"[INFO] Wczytywanie {os.path.basename(sciezka_pliku)}...")
+    if wyswietlaj_informacje:
+        print(f"[INFO] Wczytywanie {os.path.basename(sciezka_pliku)}...")
 
-        if not os.path.exists(sciezka_pliku):
-            raise FileNotFoundError(f"Plik nie istnieje: {sciezka_pliku}")
+    if not os.path.exists(sciezka_pliku):
+        raise FileNotFoundError(f"Plik nie istnieje: {sciezka_pliku}")
 
-        kodowanie = _wykryj_kodowanie(sciezka_pliku)
-        if wyswietlaj_informacje:
-            print(f"Kodowanie: {kodowanie}")
+    # 1) detekcja kodowania i separatora (pomijam tu implementację _wykryj_kodowanie/_wykryj_separator)
+    kodowanie = _wykryj_kodowanie(sciezka_pliku)
+    if separator is None:
+        separator = _wykryj_separator(sciezka_pliku, kodowanie)
 
-        # Ulepszone wykrycie separatora
-        if separator is None:
-            separator = _wykryj_separator(sciezka_pliku, kodowanie)
-            if wyswietlaj_informacje:
-                print(f"Separator: '{separator}'")
-        elif isinstance(separator, list):
-            najlepszy, max_kol = None, 0
-            for sep in separator:
-                try:
-                    cols = pd.read_csv(sciezka_pliku, sep=sep, encoding=kodowanie, nrows=5, engine='c').shape[1]
-                    if cols > max_kol:
-                        max_kol, najlepszy = cols, sep
-                except:
-                    continue
-            separator = najlepszy or ','
-            if wyswietlaj_informacje:
-                print(f"Wybrany separator z listy: '{separator}'")
+    if wyswietlaj_informacje:
+        print(f"Kodowanie: {kodowanie}, Separator: '{separator}'")
 
-        filesize = os.path.getsize(sciezka_pliku)
-        csv_params = {'sep': separator, 'encoding': kodowanie, 'on_bad_lines': 'warn'}
-        # Użyj pyarrow, jeśli jest dostępny i pandas >= 2.1
-        try:
-            pd_ver = tuple(map(int, pd.__version__.split(".")[:2]))
-            if pd_ver >= (2,1):
-                csv_params['dtype_backend'] = "pyarrow"
-        except Exception:
-            pass
+    filesize = os.path.getsize(sciezka_pliku)
 
-        # Czytanie dużych plików na chunkach
-        if filesize > 100 * 1024 * 1024:
-            chunk_size = 100_000
-            chunks = []
+    # 2) czytanie pliku
+    def _read(engine, on_bad):
+        return pd.read_csv(
+            sciezka_pliku,
+            sep=separator,
+            encoding=kodowanie,
+            engine=engine,
+            on_bad_lines=on_bad
+        )
+
+    if filesize > 100 * 1024**2:
+        # chunking
+        chunks = []
+        for eng, bad in [('c', 'warn'), ('python', 'skip')]:
             try:
-                for c in pd.read_csv(sciezka_pliku, chunksize=chunk_size, engine='c', **csv_params):
+                reader = pd.read_csv(
+                    sciezka_pliku, sep=separator, encoding=kodowanie,
+                    engine=eng, on_bad_lines=bad, chunksize=100_000
+                )
+                for c in reader:
                     c = _automatyczna_detekcja_typow(c, kolumny_daty, format_daty, wyswietlaj_informacje)
                     c = _optymalizuj_pamiec(c)
                     chunks.append(c)
+                break
             except Exception:
-                for c in pd.read_csv(sciezka_pliku, chunksize=chunk_size, engine='python', on_bad_lines="skip", **csv_params):
-                    c = _automatyczna_detekcja_typow(c, kolumny_daty, format_daty, wyswietlaj_informacje)
-                    c = _optymalizuj_pamiec(c)
-                    chunks.append(c)
-            df = pd.concat(chunks, ignore_index=True)
-        else:
+                continue
+        df = pd.concat(chunks, ignore_index=True)
+    else:
+        # całość na raz
+        for eng, bad in [('c', 'warn'), ('python', 'skip')]:
             try:
-                df = pd.read_csv(sciezka_pliku, engine='c', **csv_params)
+                df = _read(eng, bad)
+                break
             except Exception:
-                df = pd.read_csv(sciezka_pliku, engine='python', on_bad_lines="skip", **csv_params)
-            # Czyszczenie nagłówków
-            df.columns = [col.strip().replace('\ufeff', '') for col in df.columns]
-            df.columns = df.columns.str.replace(r"[\'\\]", '', regex=True)
-            if wymagane_kolumny:
-                brakujace = set(wymagane_kolumny) - set(df.columns)
-                if brakujace:
-                    raise ValueError(f"Brakujące wymagane kolumny: {brakujace}")
-                df = df.dropna(subset=wymagane_kolumny)
-            # Automatyczna detekcja typów, optymalizacja pamięci
-            df = _automatyczna_detekcja_typow(df, kolumny_daty, format_daty, wyswietlaj_informacje)
-            df = _optymalizuj_pamiec(df)
+                continue
 
-        if wyswietlaj_informacje:
-            print(f"[SUKCES] Wierszy: {len(df)}, Kolumny: {df.columns.tolist()}")
-        return df
+        # nagłówki, wymagane kolumny, typy i pamięć
+        df.columns = [col.strip().replace('\ufeff', '') for col in df.columns]
+        if wymagane_kolumny:
+            brak = set(wymagane_kolumny) - set(df.columns)
+            if brak:
+                raise ValueError(f"Brak wymaganych kolumn: {brak}")
+            df = df.dropna(subset=wymagane_kolumny)
 
-    except Exception as e:
-        print(f"[BŁĄD] {e}")
-        return None
+        df = _automatyczna_detekcja_typow(df, kolumny_daty, format_daty, wyswietlaj_informacje)
+        df = _optymalizuj_pamiec(df)
+
+    if wyswietlaj_informacje:
+        print(f"[SUKCES] Wczytano {len(df)} wierszy x {df.shape[1]} kolumn")
+
+    return df
 
 def _automatyczna_detekcja_typow(df: pd.DataFrame,
                                  kolumny_daty: List[str] = None,
