@@ -9,6 +9,7 @@ from Backend.Duplikaty import usun_duplikaty
 from Backend.Kodowanie import jedno_gorace_kodowanie, binarne_kodowanie, kodowanie_docelowe
 from Backend.Skalowanie import minmax_scaler, standard_scaler
 from Backend.Uzupelniane import uzupelnij_braki, usun_braki
+from Backend.Wartosci import zamien_wartosci
 from Dane.Dane  import wczytaj_csv
 from Backend.Statystyka import analizuj_dane_numeryczne
 from Backend.Korelacje  import oblicz_korelacje_pearsona, oblicz_korelacje_spearmana
@@ -102,6 +103,10 @@ class MainApp(tk.Tk):
         scaling_frame = ttk.Frame(notebook)
         self._build_scaling_tab(scaling_frame)
         notebook.add(scaling_frame, text="Skalowanie")
+
+        replace_frame = ttk.Frame(notebook)
+        self._build_value_replacement_tab(replace_frame)
+        notebook.add(replace_frame, text="Zamiana wartości")
 
         # Tabela wyników
         self.result_tree, ybar, xbar = self._make_treeview(tab, [])
@@ -371,6 +376,14 @@ class MainApp(tk.Tk):
         for col in numeric_cols:
             self.scaling_listbox.insert(tk.END, col)
 
+        self.replace_col_combobox["values"] = df.columns.tolist()
+        if df.columns.any():
+            self.replace_col_combobox.set(df.columns[0])
+
+        # Czyszczenie reguł
+        self._replacement_rules = {}
+        self._update_rules_listbox()
+
     def _run_fill_missing(self) -> None:
         """Obsługa wypełniania brakujących wartości"""
         if self.df is None:
@@ -574,6 +587,142 @@ class MainApp(tk.Tk):
 
         except Exception as e:
             messagebox.showerror("Błąd", f"Błąd podczas skalowania:\n{str(e)}")
+
+    def _build_value_replacement_tab(self, parent):
+        """Zakładka do zamiany wartości w DataFrame"""
+        control_frame = ttk.Frame(parent)
+        control_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Sekcja ręcznej zamiany
+        ttk.Label(control_frame, text="Ręczna zamiana:", font=('Helvetica', 10, 'bold')).pack(anchor="w", pady=(0, 5))
+
+        # Wybór kolumny
+        col_frame = ttk.Frame(control_frame)
+        col_frame.pack(fill="x", pady=2)
+        ttk.Label(col_frame, text="Kolumna:").pack(side="left")
+        self.replace_col_combobox = ttk.Combobox(col_frame, state="readonly", width=20)
+        self.replace_col_combobox.pack(side="left", padx=5)
+
+        # Wartości do zamiany
+        val_frame = ttk.Frame(control_frame)
+        val_frame.pack(fill="x", pady=2)
+        ttk.Label(val_frame, text="Stara wartość:").pack(side="left")
+        self.old_val_entry = ttk.Entry(val_frame)
+        self.old_val_entry.pack(side="left", padx=5)
+
+        ttk.Label(val_frame, text="Nowa wartość:").pack(side="left", padx=(10, 0))
+        self.new_val_entry = ttk.Entry(val_frame)
+        self.new_val_entry.pack(side="left", padx=5)
+
+        # Przyciski ręcznej zamiany
+        btn_frame = ttk.Frame(control_frame)
+        btn_frame.pack(fill="x", pady=5)
+        ttk.Button(btn_frame, text="Dodaj regułę", command=self._add_replacement_rule).pack(side="left")
+        ttk.Button(btn_frame, text="Zastosuj zamianę", command=self._run_value_replacement).pack(side="right")
+
+        # Lista aktywnych reguł
+        ttk.Label(control_frame, text="Aktywne reguły:", font=('Helvetica', 10, 'bold')).pack(anchor="w", pady=(10, 0))
+        self.rules_listbox = tk.Listbox(control_frame, height=6, selectmode="single")
+        self.rules_listbox.pack(fill="both", expand=True, pady=5)
+
+        # Przyciski zarządzania regułami
+        manage_frame = ttk.Frame(control_frame)
+        manage_frame.pack(fill="x")
+        ttk.Button(manage_frame, text="Usuń regułę", command=self._remove_rule).pack(side="left")
+        ttk.Button(manage_frame, text="Wyczyść listę", command=self._clear_rules).pack(side="right")
+
+    def _add_replacement_rule(self):
+        """Dodaje nową regułę zamiany"""
+        col = self.replace_col_combobox.get()
+        old_val = self.old_val_entry.get()
+        new_val = self.new_val_entry.get()
+
+        if not col or not old_val or not new_val:
+            messagebox.showwarning("Brak danych", "Wypełnij wszystkie pola!")
+            return
+
+        # Konwersja typów dla wartości numerycznych
+        try:
+            old_val = float(old_val) if '.' in old_val else int(old_val)
+        except ValueError:
+            pass
+
+        try:
+            new_val = float(new_val) if '.' in new_val else int(new_val)
+        except ValueError:
+            pass
+
+        # Dodanie reguły do słownika
+        if col not in self._replacement_rules:
+            self._replacement_rules[col] = {}
+
+        self._replacement_rules[col][old_val] = new_val
+        self._update_rules_listbox()
+
+    def _update_rules_listbox(self):
+        """Aktualizuje listę reguł w UI"""
+        self.rules_listbox.delete(0, tk.END)
+        for col, rules in self._replacement_rules.items():
+            for old_val, new_val in rules.items():
+                self.rules_listbox.insert(tk.END, f"{col}: {old_val} → {new_val}")
+
+    def _remove_rule(self):
+        """Usuwa zaznaczoną regułę"""
+        selection = self.rules_listbox.curselection()
+        if not selection:
+            return
+
+        index = selection[0]
+        items = [item for item in self.rules_listbox.get(0, tk.END)]
+        selected_item = items[index]
+
+        # Parsowanie usuwanej reguły
+        col_part, vals_part = selected_item.split(":")
+        col = col_part.strip()
+        old_val = vals_part.split("→")[0].strip()
+
+        # Konwersja wartości jeśli potrzeba
+        try:
+            old_val = float(old_val) if '.' in old_val else int(old_val)
+        except ValueError:
+            pass
+
+        # Usuwanie z słownika reguł
+        if col in self._replacement_rules and old_val in self._replacement_rules[col]:
+            del self._replacement_rules[col][old_val]
+            if not self._replacement_rules[col]:
+                del self._replacement_rules[col]
+
+        self._update_rules_listbox()
+
+    def _clear_rules(self):
+        """Czyści wszystkie reguły"""
+        self._replacement_rules = {}
+        self._update_rules_listbox()
+
+    def _run_value_replacement(self):
+        """Wykonuje zamianę wartości na podstawie reguł"""
+        if self.df is None:
+            messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
+            return
+
+        try:
+            result = zamien_wartosci(
+                df=self.df,
+                reguly=self._replacement_rules,
+                wyswietlaj_informacje=True
+            )
+
+            if result is not None:
+                self.current_result_df = result
+                self._display_dataframe(result)
+                self.save_btn.config(state="normal")
+                messagebox.showinfo("Sukces", "Pomyślnie zastosowano zmiany!")
+            else:
+                messagebox.showerror("Błąd", "Nie udało się zastosować zmian")
+
+        except Exception as e:
+            messagebox.showerror("Błąd", f"Błąd podczas zamiany wartości:\n{str(e)}")
 
 
 

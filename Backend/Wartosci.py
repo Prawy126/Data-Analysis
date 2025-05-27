@@ -85,16 +85,3 @@ def zamien_wartosci(
         import traceback
         print(traceback.format_exc())
         return None
-
-# Załaduj dane
-df = wczytaj_csv("online_retail_II.csv", separator=";", kolumny_daty=["InvoiceDate"], wyswietlaj_informacje=True)
-
-# Zamień wartość 2.55 na 3.0 w kolumnie "Price"
-df = zamien_wartosci(
-    df=df,
-    kolumna="Price",
-    stara_wartosc=2.55,
-    nowa_wartosc=3.0,
-    wyswietlaj_informacje=True
-)
-print(df[["Price"]].head())
