@@ -135,8 +135,3 @@ def usun_braki(
         import traceback
         print(traceback.format_exc())
         return df
-
-# Wczytaj dane
-df = wczytaj_csv("online_retail_II.csv", separator=";", kolumny_daty=["InvoiceDate"], wyswietlaj_informacje=True)
-# Usuń wiersze, które mają mniej niż 3 niepuste wartości
-df_bez_brakow = usun_braki(df, os_wiersze_kolumny='wiersze', liczba_min_niepustych=3)

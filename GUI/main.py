@@ -6,6 +6,7 @@ import numpy  as np
 
 from Backend.Czyszczenie import ekstrakcja_podtablicy
 from Backend.Duplikaty import usun_duplikaty
+from Backend.Uzupelniane import uzupelnij_braki, usun_braki
 from Dane.Dane  import wczytaj_csv
 from Backend.Statystyka import analizuj_dane_numeryczne
 from Backend.Korelacje  import oblicz_korelacje_pearsona, oblicz_korelacje_spearmana
@@ -86,6 +87,11 @@ class MainApp(tk.Tk):
         duplicates_frame = ttk.Frame(notebook)
         self._build_duplicates_tab(duplicates_frame)
         notebook.add(duplicates_frame, text="Duplikaty")
+
+        # Nowa zakładka 3 - Braki danych
+        missing_frame = ttk.Frame(notebook)
+        self._build_missing_tab(missing_frame)
+        notebook.add(missing_frame, text="Braki danych")
 
         # Tabela wyników
         self.result_tree, ybar, xbar = self._make_treeview(tab, [])
@@ -253,6 +259,142 @@ class MainApp(tk.Tk):
 
         except Exception as e:
             messagebox.showerror("Błąd", f"Błąd podczas usuwania duplikatów:\n{str(e)}")
+
+    def _build_missing_tab(self, parent):
+        """Zakładka do obsługi brakujących wartości"""
+        notebook = ttk.Notebook(parent)
+        notebook.pack(fill='both', expand=True)
+
+        # Podzakładka 1: Wypełnianie braków
+        fill_frame = ttk.Frame(notebook)
+        self._build_fill_missing_tab(fill_frame)
+        notebook.add(fill_frame, text="Wypełnij")
+
+        # Podzakładka 2: Usuwanie braków
+        remove_frame = ttk.Frame(notebook)
+        self._build_remove_missing_tab(remove_frame)
+        notebook.add(remove_frame, text="Usuń")
+
+    def _build_fill_missing_tab(self, parent):
+        """Panel do wypełniania brakujących wartości"""
+        control_frame = ttk.Frame(parent)
+        control_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Lista kolumn
+        ttk.Label(control_frame, text="Wybierz kolumny:").pack(anchor="w")
+        self.missing_listbox = tk.Listbox(control_frame, selectmode="multiple", height=5, exportselection=False)
+        self.missing_listbox.pack(fill="x", padx=5, pady=5)
+
+        # Metoda wypełnienia
+        self.fill_method = tk.StringVar(value="srednia")
+        methods = {
+            'srednia': 'Średnia',
+            'mediana': 'Mediana',
+            'moda': 'Moda',
+            'stała': 'Wartość stała'
+        }
+
+        method_frame = ttk.Frame(control_frame)
+        method_frame.pack(fill="x", pady=5)
+
+        for i, (key, val) in enumerate(methods.items()):
+            ttk.Radiobutton(method_frame, text=val, variable=self.fill_method, value=key).grid(row=0, column=i, padx=5)
+
+        # Pole dla wartości stałej
+        self.const_value = ttk.Entry(control_frame)
+        ttk.Label(control_frame, text="Wartość stała:").pack(anchor="w", pady=(10, 0))
+        self.const_value.pack(fill="x", padx=5)
+
+        # Przycisk wykonania
+        ttk.Button(control_frame, text="Wypełnij braki", command=self._run_fill_missing) \
+            .pack(side="right", padx=5, pady=10)
+
+    def _build_remove_missing_tab(self, parent):
+        """Panel do usuwania brakujących wartości"""
+        control_frame = ttk.Frame(parent)
+        control_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Wybór osi
+        self.missing_axis = tk.StringVar(value="wiersze")
+        axis_frame = ttk.Frame(control_frame)
+        axis_frame.pack(fill="x", pady=5)
+
+        ttk.Radiobutton(axis_frame, text="Wiersze", variable=self.missing_axis, value="wiersze").pack(side="left")
+        ttk.Radiobutton(axis_frame, text="Kolumny", variable=self.missing_axis, value="kolumny").pack(side="left")
+
+        # Minimalna liczba wartości
+        ttk.Label(control_frame, text="Min. liczba niepustych:").pack(anchor="w", pady=(10, 0))
+        self.min_non_missing = ttk.Spinbox(control_frame, from_=1, to=100, width=5)
+        self.min_non_missing.set(1)
+        self.min_non_missing.pack(anchor="w", padx=5)
+
+        # Przycisk wykonania
+        ttk.Button(control_frame, text="Usuń braki", command=self._run_remove_missing) \
+            .pack(side="right", padx=5, pady=10)
+
+    def _clear_preprocessing_data(self, df: pd.DataFrame) -> None:
+        """Resetuje stan po wczytaniu nowego pliku"""
+        self.current_result_df = None
+        self.save_btn.config(state="disabled")
+        self.result_tree.delete(*self.result_tree.get_children())
+
+        # Aktualizacja list kolumn
+        for listbox in [self.duplicates_listbox, self.missing_listbox]:
+            listbox.delete(0, tk.END)
+            for col in df.columns:
+                listbox.insert(tk.END, col)
+
+    def _run_fill_missing(self) -> None:
+        """Obsługa wypełniania brakujących wartości"""
+        if self.df is None:
+            messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
+            return
+
+        try:
+            selected_cols = [self.missing_listbox.get(i)
+                             for i in self.missing_listbox.curselection()]
+            method = self.fill_method.get()
+            const_val = self.const_value.get() if method == 'stała' else None
+
+            reguly = {col: method for col in selected_cols} if selected_cols else None
+
+            result = uzupelnij_braki(
+                self.df,
+                metoda=method,
+                wartosc_stala=const_val,
+                reguly=reguly,
+                wyswietlaj_info=True
+            )
+
+            self.current_result_df = result
+            self._display_dataframe(result)
+            self.save_btn.config(state="normal")
+            messagebox.showinfo("Sukces", "Pomyślnie wypełniono brakujące wartości!")
+
+        except Exception as e:
+            messagebox.showerror("Błąd", f"Błąd podczas wypełniania braków:\n{str(e)}")
+
+    def _run_remove_missing(self) -> None:
+        """Obsługa usuwania brakujących wartości"""
+        if self.df is None:
+            messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
+            return
+
+        try:
+            result = usun_braki(
+                self.df,
+                os_wiersze_kolumny=self.missing_axis.get(),
+                liczba_min_niepustych=int(self.min_non_missing.get()),
+                wyswietlaj_info=True
+            )
+
+            self.current_result_df = result
+            self._display_dataframe(result)
+            self.save_btn.config(state="normal")
+            messagebox.showinfo("Sukces", "Pomyślnie usunięto brakujące wartości!")
+
+        except Exception as e:
+            messagebox.showerror("Błąd", f"Błąd podczas usuwania braków:\n{str(e)}")
 
 
 
