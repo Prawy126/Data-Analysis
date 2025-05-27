@@ -314,20 +314,3 @@ def kodowanie_docelowe(
             'df_encoded': df,
             'mapowania': {}
         }
-# Załóżmy, że mamy wczytany DataFrame z kolumną 'Price' jako target
-df = wczytaj_csv("online_retail_II.csv")
-
-# Kodowanie kolumny "Country" z wygładzaniem
-wynik = kodowanie_docelowe(
-    df=df,
-    kolumny="Country",
-    target="Price",
-    smoothing=10.0,
-    wyswietlaj_informacje=True
-)
-
-df_encoded = wynik['df_encoded']
-mapowania = wynik['mapowania']
-
-print("\nPrzykładowe dane po kodowaniu:")
-print(df_encoded[[col for col in df_encoded.columns if 'target' in col]].head())

@@ -6,6 +6,7 @@ import numpy  as np
 
 from Backend.Czyszczenie import ekstrakcja_podtablicy
 from Backend.Duplikaty import usun_duplikaty
+from Backend.Kodowanie import jedno_gorace_kodowanie, binarne_kodowanie, kodowanie_docelowe
 from Backend.Uzupelniane import uzupelnij_braki, usun_braki
 from Dane.Dane  import wczytaj_csv
 from Backend.Statystyka import analizuj_dane_numeryczne
@@ -92,6 +93,10 @@ class MainApp(tk.Tk):
         missing_frame = ttk.Frame(notebook)
         self._build_missing_tab(missing_frame)
         notebook.add(missing_frame, text="Braki danych")
+
+        encoding_frame = ttk.Frame(notebook)
+        self._build_encoding_tab(encoding_frame)
+        notebook.add(encoding_frame, text="Kodowanie")
 
         # Tabela wyników
         self.result_tree, ybar, xbar = self._make_treeview(tab, [])
@@ -344,6 +349,18 @@ class MainApp(tk.Tk):
             for col in df.columns:
                 listbox.insert(tk.END, col)
 
+        self.encoding_listbox.delete(0, tk.END)
+        categorical_cols = [col for col in df.columns if
+                            pd.api.types.is_categorical_dtype(df[col]) or pd.api.types.is_object_dtype(df[col])]
+        for col in categorical_cols:
+            self.encoding_listbox.insert(tk.END, col)
+
+        # Aktualizacja target combobox
+        numeric_cols = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
+        self.target_combobox["values"] = numeric_cols
+        if numeric_cols:
+            self.target_combobox.set(numeric_cols[0])
+
     def _run_fill_missing(self) -> None:
         """Obsługa wypełniania brakujących wartości"""
         if self.df is None:
@@ -396,6 +413,93 @@ class MainApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("Błąd", f"Błąd podczas usuwania braków:\n{str(e)}")
 
+    def _build_encoding_tab(self, parent):
+        """Zakładka do transformacji kategorycznych"""
+        control_frame = ttk.Frame(parent)
+        control_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Wybór metody kodowania
+        ttk.Label(control_frame, text="Metoda kodowania:").pack(anchor="w")
+        self.encoding_method = tk.StringVar(value="one_hot")
+        methods = [("One-Hot", "one_hot"), ("Binarne", "binary"), ("Target", "target")]
+        method_frame = ttk.Frame(control_frame)
+        method_frame.pack(fill="x", pady=5)
+
+        for text, value in methods:
+            ttk.Radiobutton(method_frame, text=text, variable=self.encoding_method, value=value).pack(side="left")
+
+        # Lista kolumn do kodowania
+        ttk.Label(control_frame, text="Kolumny do zakodowania:").pack(anchor="w", pady=(10, 0))
+        self.encoding_listbox = tk.Listbox(control_frame, selectmode="multiple", height=5, exportselection=False)
+        self.encoding_listbox.pack(fill="x", padx=5, pady=5)
+
+        # Dodatkowe opcje dla poszczególnych metod
+        self.encoding_options_frame = ttk.Frame(control_frame)
+        self.encoding_options_frame.pack(fill="x", pady=5)
+
+        # One-Hot options
+        self.oh_drop_first = tk.BooleanVar()
+        ttk.Checkbutton(self.encoding_options_frame, text="Usuń pierwszą kolumnę", variable=self.oh_drop_first).pack(
+            side="left")
+
+        # Target encoding options
+        ttk.Label(self.encoding_options_frame, text="Kolumna docelowa:").pack(side="left", padx=5)
+        self.target_combobox = ttk.Combobox(self.encoding_options_frame, state="readonly")
+        self.target_combobox.pack(side="left")
+
+        # Przycisk wykonania
+        ttk.Button(control_frame, text="Zastosuj kodowanie", command=self._run_encoding).pack(side="right", padx=5,
+                                                                                              pady=10)
+
+    def _run_encoding(self) -> None:
+        """Obsługa logiki kodowania"""
+        if self.df is None:
+            messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
+            return
+
+        try:
+            selected_cols = [self.encoding_listbox.get(i) for i in self.encoding_listbox.curselection()]
+            if not selected_cols:
+                raise ValueError("Proszę wybrać przynajmniej jedną kolumnę do zakodowania")
+
+            method = self.encoding_method.get()
+            result = None
+
+            if method == "one_hot":
+                result = jedno_gorace_kodowanie(
+                    df=self.df,
+                    kolumny=selected_cols,
+                    usun_pierwsza=self.oh_drop_first.get(),
+                    wyswietl_informacje=True
+                )
+            elif method == "binary":
+                result = binarne_kodowanie(
+                    df=self.df,
+                    kolumny=selected_cols,
+                    wyswietlaj_informacje=True
+                )
+            elif method == "target":
+                target_col = self.target_combobox.get()
+                if not target_col:
+                    raise ValueError("Proszę wybrać kolumnę docelową")
+
+                result = kodowanie_docelowe(
+                    df=self.df,
+                    kolumny=selected_cols,
+                    target=target_col,
+                    wyswietlaj_informacje=True
+                )
+
+            if result and 'df_zakodowany' in result:
+                self.current_result_df = result['df_zakodowany']
+                self._display_dataframe(self.current_result_df)
+                self.save_btn.config(state="normal")
+                messagebox.showinfo("Sukces", "Pomyślnie zastosowano kodowanie!")
+            else:
+                messagebox.showerror("Błąd", "Nie udało się zastosować kodowania")
+
+        except Exception as e:
+            messagebox.showerror("Błąd", f"Błąd podczas kodowania:\n{str(e)}")
 
 
 
