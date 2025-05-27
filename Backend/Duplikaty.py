@@ -83,12 +83,12 @@ def usun_duplikaty(
             'liczba_duplikatow': 0
         }
 
-df = wczytaj_csv(
-    sciezka_pliku="online_retail_II.csv",
-    kolumny_daty=["InvoiceDate"],
-    format_daty="%d-%m-%Y %H:%M",
-    wyswietlaj_informacje=True
-)
+# df = wczytaj_csv(
+#     sciezka_pliku="online_retail_II.csv",
+#     kolumny_daty=["InvoiceDate"],
+#     format_daty="%d-%m-%Y %H:%M",
+#     wyswietlaj_informacje=True
+# )
 
 # Zakomentowałem testy może się jeszcze przydadzą nie wiem
 
