@@ -7,30 +7,32 @@ from Dane.Dane import wczytaj_csv
 
 
 def rysuj_wykres(
-    df: pd.DataFrame,
-    typ_wykresu: str = "scatter",
-    kolumna_x: str = None,
-    kolumna_y: str = None,
-    kolumna_koloru: str = None,
-    kolumna_rozmiaru: str = None,
-    kolumna_hue: str = None,
-    nazwa_wykresu: str = "Wykres",
-    etykieta_x: str = None,
-    etykieta_y: str = None,
-    wyswietlaj_informacje: bool = True,
-    figsize: tuple = (10, 6),
-    palette: str = "pastel",
-    styl: str = "whitegrid",
-    orient: str = "v",
-    maks_kategorie: int = 8,
-    min_procent: float = 1.0,
-    alpha: float = 0.8,
-    regline: bool = False,
-    fill_between: bool = False,
-    ci: int = None,
-    sort_values: bool = True,
-    descending: bool = True,
-    marker: str = "o"
+        df: pd.DataFrame,
+        typ_wykresu: str = "scatter",
+        kolumna_x: str = None,
+        kolumna_y: str = None,
+        kolumna_koloru: str = None,
+        kolumna_rozmiaru: str = None,
+        kolumna_hue: str = None,
+        nazwa_wykresu: str = "Wykres",
+        etykieta_x: str = None,
+        etykieta_y: str = None,
+        wyswietlaj_informacje: bool = True,
+        figsize: tuple = (10, 6),
+        palette: str = "pastel",
+        styl: str = "whitegrid",
+        orient: str = "v",
+        maks_kategorie: int = 8,
+        min_procent: float = 1.0,
+        alpha: float = 0.8,
+        regline: bool = False,
+        fill_between: bool = False,
+        ci: int = None,
+        sort_values: bool = True,
+        descending: bool = True,
+        marker: str = "o",
+        fig=None,  # Dodany parametr dla istniejącej figury
+        ax=None  # Dodany parametr dla istniejącej osi
 ) -> None:
     """
     Uniwersalna funkcja do rysowania różnych typów wykresów.
@@ -38,14 +40,23 @@ def rysuj_wykres(
 
     sns.set_theme(style=styl, palette=palette, context="notebook")
 
+    # Jeśli nie podano figury, utwórz nową
+    if fig is None:
+        fig, ax = plt.subplots(figsize=figsize)
+    # Jeśli podano figurę, ale nie oś, utwórz nową oś
+    elif ax is None:
+        ax = fig.add_subplot(111)
+
+    # Wyczyść oś przed rysowaniem
+    ax.clear()
+
     # Scatter
     if typ_wykresu == "scatter":
         if kolumna_x is None or kolumna_y is None:
             raise ValueError("Dla scatter wymagane są kolumny x i y.")
-        fig, ax = plt.subplots(figsize=figsize)
         sns.scatterplot(
             data=df, x=kolumna_x, y=kolumna_y,
-            hue=kolumna_koloru, size=kolumna_rozmiaru,
+            hue=kolumna_koloru or kolumna_hue, size=kolumna_rozmiaru,
             alpha=alpha, edgecolor="w", marker=marker, ax=ax
         )
         if regline:
@@ -64,11 +75,10 @@ def rysuj_wykres(
         data = df.copy()
         if sort_values:
             data = data.sort_values(kolumna_y, ascending=not descending)
-        fig, ax = plt.subplots(figsize=figsize)
         sns.barplot(
             data=data,
-            x=kolumna_x if orient=="v" else kolumna_y,
-            y=kolumna_y if orient=="v" else kolumna_x,
+            x=kolumna_x if orient == "v" else kolumna_y,
+            y=kolumna_y if orient == "v" else kolumna_x,
             orient=orient,
             ci=ci,
             ax=ax
@@ -83,7 +93,6 @@ def rysuj_wykres(
     elif typ_wykresu == "line":
         if kolumna_x is None or kolumna_y is None:
             raise ValueError("Dla line wymagane są kolumny x i y.")
-        fig, ax = plt.subplots(figsize=figsize)
         sns.lineplot(
             data=df, x=kolumna_x, y=kolumna_y,
             hue=kolumna_hue, marker=marker, ax=ax
@@ -98,7 +107,6 @@ def rysuj_wykres(
     elif typ_wykresu == "heatmap":
         corr = df.corr()
         mask = np.triu(np.ones_like(corr, dtype=bool))
-        fig, ax = plt.subplots(figsize=figsize)
         sns.heatmap(
             corr, mask=mask, annot=True,
             cmap="coolwarm", fmt=".2f",
@@ -126,11 +134,11 @@ def rysuj_wykres(
             pct = pd.Series({"Inne": 100.0})
 
         labels = pct.index.tolist()
-        sizes  = pct.values.tolist()
-        explode = [0.05]*len(sizes)
-        explode[sizes.index(max(sizes))] = 0.15 if len(sizes)>1 else 0
+        sizes = pct.values.tolist()
+        explode = [0.05] * len(sizes)
+        explode[sizes.index(max(sizes))] = 0.15 if len(sizes) > 1 else 0
 
-        fig, ax = plt.subplots(figsize=(figsize[0], figsize[0]))
+        ax.clear()  # Wyczyść oś przed rysowaniem wykresu kołowego
         wedges, texts, autotexts = ax.pie(
             sizes, labels=labels, autopct='%1.1f%%',
             startangle=90, explode=explode,
@@ -146,16 +154,11 @@ def rysuj_wykres(
     else:
         raise ValueError(f"Nieznany typ wykresu: {typ_wykresu}")
 
-    # Tytuł i wyświetlenie
-    fig.suptitle(nazwa_wykresu, fontsize=14)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
-    plt.show()
+    # Ustaw tytuł wykresu
+    if nazwa_wykresu:
+        ax.set_title(nazwa_wykresu)
 
-    if wyswietlaj_informacje:
-        print(f"[INFO] Wykres '{typ_wykresu}' utworzony dla: {kolumna_x or ''} {kolumna_y or ''}")
+    # Dopasuj układ wykresu
+    fig.tight_layout()
 
-df = wczytaj_csv("online_retail_II.csv")
-
-rysuj_wykres(df, typ_wykresu="pie", kolumna_x="Country", nazwa_wykresu="Udział krajów")
-rysuj_wykres(df, typ_wykresu="bar", kolumna_x="Country", kolumna_y="Quantity",
-             nazwa_wykresu="Suma ilości zamówień według kraju", sort_values=True, descending=False)
+    return fig, ax  # Zwróć figurę i oś dla dalszych modyfikacji
