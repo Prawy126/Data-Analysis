@@ -7,6 +7,7 @@ import numpy  as np
 from Backend.Czyszczenie import ekstrakcja_podtablicy
 from Backend.Duplikaty import usun_duplikaty
 from Backend.Kodowanie import jedno_gorace_kodowanie, binarne_kodowanie, kodowanie_docelowe
+from Backend.Skalowanie import minmax_scaler, standard_scaler
 from Backend.Uzupelniane import uzupelnij_braki, usun_braki
 from Dane.Dane  import wczytaj_csv
 from Backend.Statystyka import analizuj_dane_numeryczne
@@ -97,6 +98,10 @@ class MainApp(tk.Tk):
         encoding_frame = ttk.Frame(notebook)
         self._build_encoding_tab(encoding_frame)
         notebook.add(encoding_frame, text="Kodowanie")
+
+        scaling_frame = ttk.Frame(notebook)
+        self._build_scaling_tab(scaling_frame)
+        notebook.add(scaling_frame, text="Skalowanie")
 
         # Tabela wyników
         self.result_tree, ybar, xbar = self._make_treeview(tab, [])
@@ -361,6 +366,11 @@ class MainApp(tk.Tk):
         if numeric_cols:
             self.target_combobox.set(numeric_cols[0])
 
+        self.scaling_listbox.delete(0, tk.END)
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        for col in numeric_cols:
+            self.scaling_listbox.insert(tk.END, col)
+
     def _run_fill_missing(self) -> None:
         """Obsługa wypełniania brakujących wartości"""
         if self.df is None:
@@ -500,6 +510,70 @@ class MainApp(tk.Tk):
 
         except Exception as e:
             messagebox.showerror("Błąd", f"Błąd podczas kodowania:\n{str(e)}")
+
+    def _build_scaling_tab(self, parent):
+        """Zakładka do skalowania numerycznego"""
+        control_frame = ttk.Frame(parent)
+        control_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Wybór metody skalowania
+        ttk.Label(control_frame, text="Metoda skalowania:").pack(anchor="w")
+        self.scaling_method = tk.StringVar(value="minmax")
+        methods = [("Min-Max [0-1]", "minmax"), ("Standard (Z-score)", "standard")]
+        method_frame = ttk.Frame(control_frame)
+        method_frame.pack(fill="x", pady=5)
+
+        for text, value in methods:
+            ttk.Radiobutton(method_frame, text=text, variable=self.scaling_method, value=value).pack(side="left")
+
+        # Lista kolumn do skalowania
+        ttk.Label(control_frame, text="Kolumny do skalowania:").pack(anchor="w", pady=(10, 0))
+        self.scaling_listbox = tk.Listbox(control_frame, selectmode="multiple", height=5, exportselection=False)
+        self.scaling_listbox.pack(fill="x", padx=5, pady=5)
+
+        # Przycisk wykonania
+        ttk.Button(control_frame, text="Zastosuj skalowanie", command=self._run_scaling).pack(side="right", padx=5,
+                                                                                              pady=10)
+
+    def _run_scaling(self) -> None:
+        """Obsługa logiki skalowania"""
+        if self.df is None:
+            messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
+            return
+
+        try:
+            selected_cols = [self.scaling_listbox.get(i) for i in self.scaling_listbox.curselection()]
+            if not selected_cols:
+                raise ValueError("Proszę wybrać przynajmniej jedną kolumnę do skalowania")
+
+            method = self.scaling_method.get()
+            result = None
+
+            if method == "minmax":
+                result = minmax_scaler(
+                    df=self.df,
+                    kolumny=selected_cols,
+                    wyswietlaj_informacje=True,
+                    zwroc_tylko_dane=True
+                )
+            elif method == "standard":
+                result = standard_scaler(
+                    df=self.df,
+                    kolumny=selected_cols,
+                    wyswietlaj_informacje=True,
+                    zwroc_tylko_dane=True
+                )
+
+            if result is not None:
+                self.current_result_df = result
+                self._display_dataframe(result)
+                self.save_btn.config(state="normal")
+                messagebox.showinfo("Sukces", "Pomyślnie zastosowano skalowanie!")
+            else:
+                messagebox.showerror("Błąd", "Nie udało się zastosować skalowania")
+
+        except Exception as e:
+            messagebox.showerror("Błąd", f"Błąd podczas skalowania:\n{str(e)}")
 
 
 

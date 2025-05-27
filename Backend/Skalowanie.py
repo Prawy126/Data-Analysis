@@ -126,23 +126,3 @@ def standard_scaler(
     if zwroc_tylko_dane:
         return wynik_df
     return {'df_scaled': wynik_df, 'skale': skale}
-
-
-# 1. Wczytaj dane
-df = wczytaj_csv(
-    sciezka_pliku="online_retail_II.csv",
-    separator=";",
-    kolumny_daty=["InvoiceDate"],
-    wyswietlaj_informacje=True
-)
-
-# 2. Standaryzuj wybrane kolumny
-wynik = standard_scaler(
-    df=df,
-    kolumny=["Quantity", "Price"],
-    wyswietlaj_informacje=True
-)
-
-# 3. Wyświetl wynik
-print("\n[INFO] Przykładowe dane po standaryzacji:")
-print(wynik['df_scaled'][["Quantity", "Price"]].head())
