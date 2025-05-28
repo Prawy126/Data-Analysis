@@ -23,7 +23,7 @@ class MainApp(tk.Tk):
         """Inicjalizacja głównego okna aplikacji"""
         super().__init__()
 
-        # Konfiguracja okna głównego
+        # Konfiguracja okna
         self.title("Data Toolkit")
         self.geometry("1000x600")
         self.minsize(820, 480)
@@ -33,21 +33,17 @@ class MainApp(tk.Tk):
         self.df: pd.DataFrame | None = None
         self.path: str | None = None
 
-        # Zmienne kontrolne dla wykresów
-        self.regline_var = tk.BooleanVar()  # Linia regresji
-        self.sort_values_var = tk.BooleanVar()  # Sortowanie wartości
-
-        # Zmienne dla AI
+        # Zmienne kontrolne wykresów / AI
+        self.regline_var = tk.BooleanVar()
+        self.sort_values_var = tk.BooleanVar()
         self.selected_features = []
         self.target_var = tk.StringVar()
-        self._chart_vars = {}  # Zmienne kontrolne dla opcji wykresów
-        self._replacement_rules = {}  # Reguły zamiany wartości
+        self._chart_vars = {}
+        self._replacement_rules = {}
 
-        # Inicjalizacja paska menu
+        # Pasek menu
         self.menubar = tk.Menu(self)
         self.config(menu=self.menubar)
-
-        # Menu "Akcje"
         akcje_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Akcje", menu=akcje_menu)
         akcje_menu.add_command(label="Pre-processing", command=self._load_pre)
@@ -56,12 +52,39 @@ class MainApp(tk.Tk):
         akcje_menu.add_separator()
         akcje_menu.add_command(label="Zamknij", command=self.quit)
 
-        # Notebook (zakładki)
+        # Notebook (główne zakładki)
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Załaduj domyślną zakładkę "Pre-processing"
+        # Pasek stanu + flaga busy
+        self.status_var = tk.StringVar(value="Gotowe")
+        self.status_bar = ttk.Label(self, textvariable=self.status_var,
+                                    relief="sunken", anchor="w", padding=(6, 2))
+        self.status_bar.pack(side="bottom", fill="x")
+
+        # Załaduj pierwszą zakładkę
         self._load_pre()
+
+    def _set_busy(self, msg: str = "Ładowanie…") -> None:
+        self.status_var.set(msg)
+        self.config(cursor="watch")
+        self.update_idletasks()
+
+    def _set_ready(self, msg: str = "Gotowe") -> None:
+        self.status_var.set(msg)
+        self.config(cursor="")
+        self.update_idletasks()
+
+    # ─────────────────────────────────────────────
+    #  Helpers wizualizacji
+    # ─────────────────────────────────────────────
+    def _set_combo_state(self, combo: ttk.Combobox, active: bool) -> None:
+        """Ustawia stan comboboxa; przy dezaktywacji czyści jego wartość."""
+        if active:
+            combo.config(state="readonly")
+        else:
+            combo.set("")
+            combo.config(state="disabled")
 
     # ──────────────────────────────────────────────────────────────
     #  Wspólne: loader CSV + pomoc
@@ -77,20 +100,21 @@ class MainApp(tk.Tk):
                 title="Wybierz plik CSV",
                 filetypes=[("CSV", "*.csv"), ("Wszystkie", "*.*")]
             )
-            if not fp:
-                return
+            if not fp: return
+            self._set_busy("Wczytywanie pliku…")
             df = wczytaj_csv(fp, separator=None, wyswietlaj_informacje=True)
             if df is None:
+                self._set_ready()
                 messagebox.showerror("Błąd", "Nie udało się wczytać pliku.")
                 return
             self.df, self.path = df, fp
             info.set(f"{fp.split('/')[-1]}  ({len(df)}×{len(df.columns)})")
             messagebox.showinfo("OK", "Plik wczytany!")
-
             if on_success:
                 on_success(df)
             else:
                 self._update_all_columns(df)
+            self._set_ready()
 
         ttk.Button(frm, text="Wczytaj plik CSV", command=choose).pack(side="left")
         ttk.Label(frm, textvariable=info).pack(side="left", padx=10)
@@ -209,52 +233,50 @@ class MainApp(tk.Tk):
         ttk.Button(control_frame, text="Ekstrahuj podtablicę", command=self._run_extraction) \
             .grid(row=3, column=0, columnspan=2, pady=5)
 
-
     def _run_extraction(self) -> None:
-        """Obsługa logiki ekstrakcji"""
         if self.df is None:
             messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
             return
 
-        # Parsowanie wejść
+        # Parsowanie pól
         rows = None
         if self.rows_entry.get().strip():
             try:
                 rows = list(map(int, self.rows_entry.get().split(",")))
             except ValueError:
-                messagebox.showerror("Błąd", "Nieprawidłowy format wierszy. Podaj indeksy oddzielone przecinkami.")
+                messagebox.showerror("Błąd",
+                                     "Nieprawidłowy format wierszy. Podaj indeksy oddzielone przecinkami.")
                 return
-
         cols = None
         if self.cols_entry.get().strip():
             cols = [c.strip() for c in self.cols_entry.get().split(",")]
 
-        # Wywołanie funkcji ekstrakcji
-        result = ekstrakcja_podtablicy(
-            self.df,
-            rows=rows,
-            cols=cols,
-            mode=self.mode_var.get(),
-            wyswietlaj_informacje=True
-        )
+        self._set_busy("Ekstrakcja danych…")
+        try:
+            result = ekstrakcja_podtablicy(
+                self.df, rows=rows, cols=cols,
+                mode=self.mode_var.get(), wyswietlaj_informacje=True
+            )
+            if result is not None:
+                self.current_result_df = result
+                self._display_dataframe(result)
+                self.save_btn.config(state="normal")
+        except Exception as e:
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
 
-        if result is not None:
-            self.current_result_df = result
-            self._display_dataframe(result)
-            self.save_btn.config(state="normal")
-
-    def _display_dataframe(self, df: pd.DataFrame) -> None:
-        """Aktualizacja Treeview z wynikami"""
+    def _display_dataframe(self, df: pd.DataFrame, max_rows: int = 100) -> None:
+        """Aktualizacja Treeview – pokazuje maks. `max_rows` wierszy."""
         self.result_tree.delete(*self.result_tree.get_children())
+        df_show = df.head(max_rows)
 
-        # Konfiguracja kolumn
-        self.result_tree["columns"] = list(df.columns)
-        for col in df.columns:
+        self.result_tree["columns"] = list(df_show.columns)
+        for col in df_show.columns:
             self.result_tree.heading(col, text=col)
             self.result_tree.column(col, width=100, anchor="center")
 
-        # Wypełnianie danymi
-        for index, row in df.iterrows():
+        for _, row in df_show.iterrows():
             self.result_tree.insert("", "end", values=list(row))
 
     def _save_result(self) -> None:
@@ -302,36 +324,33 @@ class MainApp(tk.Tk):
             .pack(side="right", padx=5, pady=5)
 
     def _run_duplicate_removal(self) -> None:
-        """Obsługa usuwania duplikatów"""
         if self.df is None:
             messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
             return
 
+        self._set_busy("Usuwanie duplikatów…")
         try:
-            # Pobranie wybranych kolumn
             selected_cols = [self.duplicates_listbox.get(i)
                              for i in self.duplicates_listbox.curselection()]
-
-            # Wywołanie funkcji z backendu
             result = usun_duplikaty(
-                self.df,
-                kolumny=selected_cols or None,
-                tryb=self.duplicates_mode.get(),
-                wyswietlaj_info=True
+                self.df, kolumny=selected_cols or None,
+                tryb=self.duplicates_mode.get(), wyswietlaj_info=True
             )
-
             if result['liczba_duplikatow'] > 0:
                 self.current_result_df = result['df_cleaned']
                 self._display_dataframe(self.current_result_df)
                 self.save_btn.config(state="normal")
-                messagebox.showinfo("Sukces",
-                                    f"Usunięto {result['liczba_duplikatow']} duplikatów!\n"
-                                    f"Nowa liczba wierszy: {len(self.current_result_df)}")
+                messagebox.showinfo(
+                    "Sukces",
+                    f"Usunięto {result['liczba_duplikatow']} duplikatów!\n"
+                    f"Nowa liczba wierszy: {len(self.current_result_df)}"
+                )
             else:
                 messagebox.showinfo("Informacja", "Nie znaleziono duplikatów do usunięcia")
-
         except Exception as e:
-            messagebox.showerror("Błąd", f"Błąd podczas usuwania duplikatów:\n{str(e)}")
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
 
     def _build_missing_tab(self, parent):
         """Zakładka do obsługi brakujących wartości"""
@@ -445,43 +464,38 @@ class MainApp(tk.Tk):
         if hasattr(self, 'x_col'):
             self._update_columns(df)
 
-
     def _run_fill_missing(self) -> None:
-        """Obsługa wypełniania brakujących wartości"""
         if self.df is None:
             messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
             return
 
+        selected_cols = [self.missing_listbox.get(i)
+                         for i in self.missing_listbox.curselection()]
+        method = self.fill_method.get()
+        const_val = self.const_value.get() if method == 'stała' else None
+        reguly = {col: method for col in selected_cols} if selected_cols else None
+
+        self._set_busy("Wypełnianie braków…")
         try:
-            selected_cols = [self.missing_listbox.get(i)
-                             for i in self.missing_listbox.curselection()]
-            method = self.fill_method.get()
-            const_val = self.const_value.get() if method == 'stała' else None
-
-            reguly = {col: method for col in selected_cols} if selected_cols else None
-
             result = uzupelnij_braki(
-                self.df,
-                metoda=method,
-                wartosc_stala=const_val,
-                reguly=reguly,
-                wyswietlaj_info=True
+                self.df, metoda=method, wartosc_stala=const_val,
+                reguly=reguly, wyswietlaj_info=True
             )
-
             self.current_result_df = result
             self._display_dataframe(result)
             self.save_btn.config(state="normal")
             messagebox.showinfo("Sukces", "Pomyślnie wypełniono brakujące wartości!")
-
         except Exception as e:
-            messagebox.showerror("Błąd", f"Błąd podczas wypełniania braków:\n{str(e)}")
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
 
     def _run_remove_missing(self) -> None:
-        """Obsługa usuwania brakujących wartości"""
         if self.df is None:
             messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
             return
 
+        self._set_busy("Usuwanie braków…")
         try:
             result = usun_braki(
                 self.df,
@@ -489,14 +503,14 @@ class MainApp(tk.Tk):
                 liczba_min_niepustych=int(self.min_non_missing.get()),
                 wyswietlaj_info=True
             )
-
             self.current_result_df = result
             self._display_dataframe(result)
             self.save_btn.config(state="normal")
             messagebox.showinfo("Sukces", "Pomyślnie usunięto brakujące wartości!")
-
         except Exception as e:
-            messagebox.showerror("Błąd", f"Błąd podczas usuwania braków:\n{str(e)}")
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
 
     def _build_encoding_tab(self, parent):
         """Zakładka do transformacji kategorycznych"""
@@ -537,41 +551,34 @@ class MainApp(tk.Tk):
                                                                                               pady=10)
 
     def _run_encoding(self) -> None:
-        """Obsługa logiki kodowania"""
         if self.df is None:
             messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
             return
 
+        selected_cols = [self.encoding_listbox.get(i)
+                         for i in self.encoding_listbox.curselection()]
+        if not selected_cols:
+            messagebox.showerror("Błąd", "Proszę wybrać przynajmniej jedną kolumnę")
+            return
+
+        method = self.encoding_method.get()
+        self._set_busy("Kodowanie kategorii…")
         try:
-            selected_cols = [self.encoding_listbox.get(i) for i in self.encoding_listbox.curselection()]
-            if not selected_cols:
-                raise ValueError("Proszę wybrać przynajmniej jedną kolumnę do zakodowania")
-
-            method = self.encoding_method.get()
-            result = None
-
             if method == "one_hot":
                 result = jedno_gorace_kodowanie(
-                    df=self.df,
-                    kolumny=selected_cols,
-                    usun_pierwsza=self.oh_drop_first.get(),
-                    wyswietl_informacje=True
+                    self.df, kolumny=selected_cols,
+                    usun_pierwsza=self.oh_drop_first.get(), wyswietl_informacje=True
                 )
             elif method == "binary":
                 result = binarne_kodowanie(
-                    df=self.df,
-                    kolumny=selected_cols,
-                    wyswietlaj_informacje=True
+                    self.df, kolumny=selected_cols, wyswietlaj_informacje=True
                 )
-            elif method == "target":
+            else:  # target
                 target_col = self.target_combobox.get()
                 if not target_col:
                     raise ValueError("Proszę wybrać kolumnę docelową")
-
                 result = kodowanie_docelowe(
-                    df=self.df,
-                    kolumny=selected_cols,
-                    target=target_col,
+                    self.df, kolumny=selected_cols, target=target_col,
                     wyswietlaj_informacje=True
                 )
 
@@ -580,11 +587,10 @@ class MainApp(tk.Tk):
                 self._display_dataframe(self.current_result_df)
                 self.save_btn.config(state="normal")
                 messagebox.showinfo("Sukces", "Pomyślnie zastosowano kodowanie!")
-            else:
-                messagebox.showerror("Błąd", "Nie udało się zastosować kodowania")
-
         except Exception as e:
-            messagebox.showerror("Błąd", f"Błąd podczas kodowania:\n{str(e)}")
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
 
     def _build_scaling_tab(self, parent):
         """Zakładka do skalowania numerycznego"""
@@ -611,44 +617,37 @@ class MainApp(tk.Tk):
                                                                                               pady=10)
 
     def _run_scaling(self) -> None:
-        """Obsługa logiki skalowania"""
         if self.df is None:
             messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
             return
 
+        selected_cols = [self.scaling_listbox.get(i)
+                         for i in self.scaling_listbox.curselection()]
+        if not selected_cols:
+            messagebox.showerror("Błąd", "Proszę wybrać kolumny do skalowania")
+            return
+
+        method = self.scaling_method.get()
+        self._set_busy("Skalowanie…")
         try:
-            selected_cols = [self.scaling_listbox.get(i) for i in self.scaling_listbox.curselection()]
-            if not selected_cols:
-                raise ValueError("Proszę wybrać przynajmniej jedną kolumnę do skalowania")
-
-            method = self.scaling_method.get()
-            result = None
-
             if method == "minmax":
                 result = minmax_scaler(
-                    df=self.df,
-                    kolumny=selected_cols,
-                    wyswietlaj_informacje=True,
-                    zwroc_tylko_dane=True
+                    self.df, kolumny=selected_cols,
+                    wyswietlaj_informacje=True, zwroc_tylko_dane=True
                 )
-            elif method == "standard":
-                result = standard_scaler(
-                    df=self.df,
-                    kolumny=selected_cols,
-                    wyswietlaj_informacje=True,
-                    zwroc_tylko_dane=True
-                )
-
-            if result is not None:
-                self.current_result_df = result
-                self._display_dataframe(result)
-                self.save_btn.config(state="normal")
-                messagebox.showinfo("Sukces", "Pomyślnie zastosowano skalowanie!")
             else:
-                messagebox.showerror("Błąd", "Nie udało się zastosować skalowania")
-
+                result = standard_scaler(
+                    self.df, kolumny=selected_cols,
+                    wyswietlaj_informacje=True, zwroc_tylko_dane=True
+                )
+            self.current_result_df = result
+            self._display_dataframe(result)
+            self.save_btn.config(state="normal")
+            messagebox.showinfo("Sukces", "Pomyślnie zastosowano skalowanie!")
         except Exception as e:
-            messagebox.showerror("Błąd", f"Błąd podczas skalowania:\n{str(e)}")
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
 
     def _build_value_replacement_tab(self, parent):
         """Zakładka do zamiany wartości w DataFrame"""
@@ -762,29 +761,24 @@ class MainApp(tk.Tk):
         self._replacement_rules = {}
         self._update_rules_listbox()
 
-    def _run_value_replacement(self):
-        """Wykonuje zamianę wartości na podstawie reguł"""
+    def _run_value_replacement(self) -> None:
         if self.df is None:
             messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
             return
-
+        self._set_busy("Zamiana wartości…")
         try:
             result = zamien_wartosci(
-                df=self.df,
-                reguly=self._replacement_rules,
+                self.df, reguly=self._replacement_rules,
                 wyswietlaj_informacje=True
             )
-
-            if result is not None:
-                self.current_result_df = result
-                self._display_dataframe(result)
-                self.save_btn.config(state="normal")
-                messagebox.showinfo("Sukces", "Pomyślnie zastosowano zmiany!")
-            else:
-                messagebox.showerror("Błąd", "Nie udało się zastosować zmian")
-
+            self.current_result_df = result
+            self._display_dataframe(result)
+            self.save_btn.config(state="normal")
+            messagebox.showinfo("Sukces", "Pomyślnie zastosowano zmiany!")
         except Exception as e:
-            messagebox.showerror("Błąd", f"Błąd podczas zamiany wartości:\n{str(e)}")
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
 
 
 
@@ -872,20 +866,14 @@ class MainApp(tk.Tk):
         self._add_loader(tab, on_success=lambda df: None)  # Loader tylko do wczytania danych
 
     def _run_non_numeric_stats(self, tree: ttk.Treeview) -> None:
-        """Uruchamia analizę statystyk nielicyznych i aktualizuje Treeview"""
         if self.df is None:
             messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
             return
-
+        self._set_busy("Analiza nieliczbowa…")
         try:
             from Backend.Statystyka import oblicz_statystyki_nie_numeryczne
             stats = oblicz_statystyki_nie_numeryczne(self.df)
-
-            # Wyczyść poprzednie wyniki
-            for item in tree.get_children():
-                tree.delete(item)
-
-            # Wypełnij Treeview danymi
+            tree.delete(*tree.get_children())
             for col_name, col_stats in stats.items():
                 tree.insert("", "end", values=(
                     col_name,
@@ -895,9 +883,10 @@ class MainApp(tk.Tk):
                     f"{col_stats['czestotliwosc_najczestszej'] * 100:.2f}",
                     f"{col_stats['procent_wypelnienia']:.2f}"
                 ))
-
         except Exception as e:
-            messagebox.showerror("Błąd", f"Nie udało się wygenerować statystyk nieliczonych:\n{str(e)}")
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
 
     # ---------- Korelacje -------------------------------------------------
     # wewnątrz klasy MainApp
@@ -963,31 +952,30 @@ class MainApp(tk.Tk):
         self._add_loader(tab)  # przycisk 'Wczytaj plik CSV'
 
     def _build_visualization_tab(self) -> None:
-        """Zakładka do tworzenia wizualizacji"""
+        """Zakładka do tworzenia wizualizacji (z kontrolkami zależnymi od typu)."""
         tab = ttk.Frame(self.nb)
         self.nb.add(tab, text="Wizualizacje")
 
-        # Dodaj standardową ładowarkę CSV
+        # Loader CSV
         self._add_loader(tab, on_success=lambda df: self._update_visualization_columns(df))
 
-        # Główny kontener z panelami kontrolnym i wykresu
-        main_frame = ttk.Frame(tab)
+        # Główny układ
+        main_frame = ttk.Frame(tab);
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Panel kontrolny po lewej stronie
-        control_frame = ttk.Frame(main_frame)
+        # ───────── panel kontrolny ─────────
+        control_frame = ttk.Frame(main_frame);
         control_frame.pack(side="left", fill="y", padx=10)
 
-        # Wybór typu wykresu
         ttk.Label(control_frame, text="Typ wykresu:").pack(anchor="w")
-        self.chart_type = ttk.Combobox(control_frame, values=[
-            "scatter", "bar", "line", "heatmap", "pie"
-        ], state="readonly")
+        self.chart_type = ttk.Combobox(
+            control_frame, state="readonly",
+            values=["scatter", "line", "bar", "heatmap", "pie"]
+        )
         self.chart_type.set("scatter")
         self.chart_type.pack(fill="x", pady=5)
         self.chart_type.bind("<<ComboboxSelected>>", self._update_chart_options)
 
-        # Wybór kolumn
         ttk.Label(control_frame, text="Kolumna X:").pack(anchor="w")
         self.x_col = ttk.Combobox(control_frame, state="readonly")
         self.x_col.pack(fill="x", pady=2)
@@ -1000,89 +988,72 @@ class MainApp(tk.Tk):
         self.hue_col = ttk.Combobox(control_frame, state="readonly")
         self.hue_col.pack(fill="x", pady=2)
 
-        # Dodatkowe opcje
-        self.options_frame = ttk.Frame(control_frame)
-        self.options_frame.pack(fill="x", pady=5)
+        self.options_frame = ttk.Frame(control_frame);
+        self.options_frame.pack(fill="x", pady=6)
 
-        # Tytuły i etykiety
-        ttk.Label(control_frame, text="Tytuł wykresu:").pack(anchor="w")
-        self.chart_title = ttk.Entry(control_frame)
-        self.chart_title.pack(fill="x", pady=2)
+        # Tytuły / etykiety
+        for lbl, attr in [("Tytuł wykresu:", "chart_title"),
+                          ("Etykieta X:", "x_label"),
+                          ("Etykieta Y:", "y_label")]:
+            ttk.Label(control_frame, text=lbl).pack(anchor="w")
+            setattr(self, attr, ttk.Entry(control_frame))
+            getattr(self, attr).pack(fill="x", pady=2)
 
-        ttk.Label(control_frame, text="Etykieta X:").pack(anchor="w")
-        self.x_label = ttk.Entry(control_frame)
-        self.x_label.pack(fill="x", pady=2)
+        ttk.Button(control_frame, text="Generuj wykres", command=self._generate_plot) \
+            .pack(side="bottom", pady=10)
 
-        ttk.Label(control_frame, text="Etykieta Y:").pack(anchor="w")
-        self.y_label = ttk.Entry(control_frame)
-        self.y_label.pack(fill="x", pady=2)
-
-        # Przycisk generowania wykresu
-        ttk.Button(
-            control_frame,
-            text="Generuj wykres",
-            command=self._generate_plot
-        ).pack(side="bottom", pady=10)
-
-        # Obszar rysowania wykresu po prawej stronie
+        # ───────── obszar rysunku ─────────
         self.figure = plt.figure(figsize=(8, 6))
         self.canvas = FigureCanvasTkAgg(self.figure, master=main_frame)
         self.canvas.get_tk_widget().pack(side="right", fill="both", expand=True)
 
-        # Jeśli dane są już załadowane, zaktualizuj listy kolumn
+        # Po pierwszym uruchomieniu
         if self.df is not None:
             self._update_visualization_columns(self.df)
+        self._update_chart_options()  # ustawia stany kontrolek
 
     def _update_chart_options(self, event=None) -> None:
-        """Aktualizuje dostępne opcje w zależności od typu wykresu"""
-        for widget in self.options_frame.winfo_children():
-            widget.destroy()
+        """Pokazuje tylko te opcje, które pasują do wybranego typu wykresu."""
+        # Wyczyść panel opcji
+        for w in self.options_frame.winfo_children():
+            w.destroy()
 
         chart_type = self.chart_type.get()
 
-        # Tworzymy zmienne kontrolne i przechowujemy je jako atrybuty
-        if not hasattr(self, '_chart_vars'):
+        # Reset / aktywizacja głównych comboboxów
+        needs_x = chart_type in ("scatter", "line", "bar", "pie")
+        needs_y = chart_type in ("scatter", "line", "bar")
+        needs_hue = chart_type in ("scatter", "line")
+
+        self._set_combo_state(self.x_col, needs_x)
+        self._set_combo_state(self.y_col, needs_y)
+        self._set_combo_state(self.hue_col, needs_hue)
+
+        # Słownik zmiennych pomocniczych (tworzony raz)
+        if not hasattr(self, "_chart_vars"):
             self._chart_vars = {}
 
-        # Opcje dla scatter i line
-        if chart_type in ["scatter", "line"]:
-            self._chart_vars['regline'] = tk.BooleanVar(value=False)
-            ttk.Checkbutton(
-                self.options_frame,
-                text="Linia regresji",
-                variable=self._chart_vars['regline']
-            ).pack(anchor="w")
+        # Dodatkowe opcje specyficzne
+        if chart_type in ("scatter", "line"):
+            self._chart_vars["regline"] = tk.BooleanVar(value=False)
+            ttk.Checkbutton(self.options_frame, text="Linia regresji",
+                            variable=self._chart_vars["regline"]).pack(anchor="w")
 
-        # Opcje dla bar
-        elif chart_type == "bar":
-            self._chart_vars['sort_values'] = tk.BooleanVar(value=False)
-            ttk.Checkbutton(
-                self.options_frame,
-                text="Sortuj wartości",
-                variable=self._chart_vars['sort_values']
-            ).pack(anchor="w")
+        if chart_type == "bar":
+            self._chart_vars["sort_values"] = tk.BooleanVar(value=True)
+            ttk.Checkbutton(self.options_frame, text="Sortuj wartości",
+                            variable=self._chart_vars["sort_values"]).pack(anchor="w")
 
-        # Opcje dla pie
-        elif chart_type == "pie":
+        if chart_type == "pie":
             ttk.Label(self.options_frame, text="Maks kategorii:").pack(anchor="w")
-            self._chart_vars['maks_kategorie'] = tk.IntVar(value=8)
-            ttk.Spinbox(
-                self.options_frame,
-                from_=3,
-                to=15,
-                textvariable=self._chart_vars['maks_kategorie']
-            ).pack(anchor="w")
+            self._chart_vars["maks_kategorie"] = tk.IntVar(value=8)
+            ttk.Spinbox(self.options_frame, from_=3, to=15,
+                        textvariable=self._chart_vars["maks_kategorie"]).pack(anchor="w")
 
             ttk.Label(self.options_frame, text="Min. procent:").pack(anchor="w")
-            self._chart_vars['min_procent'] = tk.DoubleVar(value=1.0)
-            ttk.Spinbox(
-                self.options_frame,
-                from_=0.1,
-                to=100.0,
-                increment=0.1,
-                textvariable=self._chart_vars['min_procent']
-            ).pack(anchor="w")
-
+            self._chart_vars["min_procent"] = tk.DoubleVar(value=1.0)
+            ttk.Spinbox(self.options_frame, from_=0.1, to=100.0, increment=0.1,
+                        textvariable=self._chart_vars["min_procent"]).pack(anchor="w")
 
     def _update_columns(self, df: pd.DataFrame) -> None:
         """Aktualizuje listy kolumn po wczytaniu danych"""
@@ -1100,20 +1071,14 @@ class MainApp(tk.Tk):
             self.hue_col.set(cat_cols[0] if cat_cols else "")
 
     def _generate_plot(self) -> None:
-        """Generuje wykres na podstawie wybranych parametrów"""
         if self.df is None:
             messagebox.showwarning("Błąd", "Najpierw wczytaj plik CSV!")
             return
 
+        self._set_busy("Generowanie wykresu…")
         try:
-            # Wyczyść figurę, ale nie zamykaj jej
             self.figure.clear()
-
-            # Pobierz aktualną oś lub utwórz nową
-            if len(self.figure.axes) == 0:
-                ax = self.figure.add_subplot(111)
-            else:
-                ax = self.figure.axes[0]
+            ax = self.figure.add_subplot(111)
 
             params = {
                 "df": self.df,
@@ -1128,27 +1093,20 @@ class MainApp(tk.Tk):
                 "sort_values": False,
                 "maks_kategorie": 8,
                 "min_procent": 1.0,
-                "fig": self.figure,  # Przekaż istniejącą figurę
-                "ax": ax  # Przekaż istniejącą oś
+                "fig": self.figure,
+                "ax": ax
             }
-
-            # Dodatkowe opcje z _chart_vars
             if hasattr(self, '_chart_vars'):
                 for key, var in self._chart_vars.items():
                     if isinstance(var, (tk.BooleanVar, tk.IntVar, tk.DoubleVar)):
                         params[key] = var.get()
 
-            # Wywołaj funkcję rysowania i zachowaj zwrócone obiekty
-            fig, ax = rysuj_wykres(**params)
-
-            # Odśwież canvas
+            rysuj_wykres(**params)
             self.canvas.draw()
-
         except Exception as e:
-            messagebox.showerror("Błąd", f"Nie udało się wygenerować wykresu:\n{str(e)}")
-            # Wyświetl pełny traceback dla łatwiejszego debugowania
-            import traceback
-            traceback.print_exc()
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
 
     # ──────────────────────────────────────────────────────────────
     #  Pomocnicze
@@ -1246,49 +1204,43 @@ class MainApp(tk.Tk):
         if self.df is not None:
             self._update_all_columns(self.df)
 
-
     def _run_classification(self) -> None:
-        """Uruchamia proces klasyfikacji i wyświetla wyniki"""
         if self.df is None:
             messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
             return
 
+        feature_indices = self.feature_listbox.curselection()
+        features = [self.feature_listbox.get(i) for i in feature_indices]
+        target_col = self.target_combobox.get()
+        if not features or not target_col:
+            messagebox.showerror("Błąd", "Wybierz cechy i kolumnę docelową!")
+            return
+
+        test_size = float(self.test_size.get())
+        seed = int(self.seed_entry.get())
+
+        self._set_busy("Klasyfikacja…")
         try:
-            # Pobierz dane z UI
-            feature_indices = self.feature_listbox.curselection()
-            features = [self.feature_listbox.get(i) for i in feature_indices]
-            target_col = self.target_combobox.get()
-            test_size = float(self.test_size.get())
-            seed = int(self.seed_entry.get())
-
-            # Walidacja
-            if not features or not target_col:
-                raise ValueError("Wybierz cechy i kolumnę docelową!")
-
-            # Przygotowanie danych
             X = self.df[features]
             y = self.df[target_col]
-
-            # Kodowanie targetu jeśli potrzeba
             if y.dtype == object or str(y.dtype).startswith("category"):
                 y = y.astype("category").cat.codes
 
-            # Uruchom klasyfikację
-            preds_df = classify_and_return_predictions(X, y, test_size=test_size, random_state=seed)
+            preds_df = classify_and_return_predictions(
+                X, y, test_size=test_size, random_state=seed
+            )
 
-            # Aktualizuj Treeview
             self.classification_tree.delete(*self.classification_tree.get_children())
             self.classification_tree["columns"] = list(preds_df.columns)
-
             for col in preds_df.columns:
                 self.classification_tree.heading(col, text=col)
                 self.classification_tree.column(col, width=100, anchor="center")
-
             for _, row in preds_df.iterrows():
                 self.classification_tree.insert("", "end", values=list(row))
-
         except Exception as e:
-            messagebox.showerror("Błąd", f"Błąd klasyfikacji:\n{str(e)}")
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
 
     def _build_clustering_tab(self, parent: ttk.Frame) -> None:
         """Zakładka do klasteryzacji danych"""
@@ -1339,50 +1291,42 @@ class MainApp(tk.Tk):
         if self.df is not None:
             self._update_all_columns(self.df)
 
-
     def _run_clustering(self) -> None:
-        """Uruchamia proces klasteryzacji i wyświetla wyniki"""
         if self.df is None:
             messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
             return
 
+        feature_indices = self.clustering_listbox.curselection()
+        features = [self.clustering_listbox.get(i) for i in feature_indices]
+        if not features:
+            messagebox.showerror("Błąd", "Wybierz cechy do klasteryzacji!")
+            return
+
+        n_clusters = int(self.n_clusters.get())
+        seed = int(self.clust_seed_entry.get())
+
+        self._set_busy("Klasteryzacja…")
         try:
-            # Pobierz dane z UI
-            feature_indices = self.clustering_listbox.curselection()
-            features = [self.clustering_listbox.get(i) for i in feature_indices]
-            n_clusters = int(self.n_clusters.get())
-            seed = int(self.clust_seed_entry.get())
-
-            # Walidacja
-            if not features:
-                raise ValueError("Wybierz cechy do klasteryzacji!")
-
-            # Przygotowanie danych
             X = self.df[features]
-
-            # Uruchom klasteryzację
             df_with_clusters, metrics = cluster_kmeans(X, n_clusters=n_clusters, seed=seed)
 
-            # Aktualizuj Treeview
             self.clustering_tree.delete(*self.clustering_tree.get_children())
             self.clustering_tree["columns"] = list(df_with_clusters.columns)
-
             for col in df_with_clusters.columns:
                 self.clustering_tree.heading(col, text=col)
                 self.clustering_tree.column(col, width=100, anchor="center")
-
             for _, row in df_with_clusters.head(50).iterrows():
                 self.clustering_tree.insert("", "end", values=list(row))
 
-            # Aktualizuj metryki
-            metrics_text = (
-                f"Inertia: {metrics['inertia']:.2f}\n"
-                f"Silhouette: {metrics['silhouette']:.4f}" if metrics["silhouette"] else "Silhouette: brak"
+            self.metrics_label.config(
+                text=(f"Inertia: {metrics['inertia']:.2f}\n"
+                      f"Silhouette: {metrics['silhouette']:.4f}"
+                      if metrics["silhouette"] else "Silhouette: brak")
             )
-            self.metrics_label.config(text=metrics_text)
-
         except Exception as e:
-            messagebox.showerror("Błąd", f"Błąd klasteryzacji:\n{str(e)}")
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
 
 
 
