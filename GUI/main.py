@@ -152,12 +152,92 @@ class MainApp(tk.Tk):
         self.page_info_var = tk.StringVar(value="")
         ttk.Label(nav, textvariable=self.page_info_var).pack(side="right")
 
+    # ─────────────────────────────────────────────
+    #  Paginator dla dowolnego Treeview
+    # ─────────────────────────────────────────────
+    def _init_paginator(self, name: str):
+        """Tworzy atrybuty stanu paginacji dla wskazanego ekranu."""
+        setattr(self, f"{name}_df", None)
+        setattr(self, f"{name}_df_id", None)
+        setattr(self, f"{name}_page", 0)
+        setattr(self, f"{name}_size", 100)
+
+    def _build_paginator_ui(self, parent: tk.Widget,
+                            name: str,
+                            prev_cmd, next_cmd, size_cmd):
+        """Rysuje belkę nawigacyjną i zapisuje referencje w self.<name>_*"""
+        bar = ttk.Frame(parent);
+        bar.pack(fill="x", padx=10, pady=(0, 6))
+
+        prev = ttk.Button(bar, text="« Poprzednia", width=12, command=prev_cmd)
+        prev.pack(side="left")
+        nextb = ttk.Button(bar, text="Następna »", width=12, command=next_cmd)
+        nextb.pack(side="left", padx=(6, 0))
+
+        ttk.Label(bar, text=" | Rekordów/str.:").pack(side="left", padx=6)
+        size_cmb = ttk.Combobox(bar, width=6, state="readonly",
+                                values=["50", "100", "200", "500", "Wszystkie"])
+        size_cmb.set("100")
+        size_cmb.bind("<<ComboboxSelected>>", size_cmd)
+        size_cmb.pack(side="left")
+
+        info = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=info).pack(side="right")
+
+        # zachowaj referencje
+        setattr(self, f"{name}_prev_btn", prev)
+        setattr(self, f"{name}_next_btn", nextb)
+        setattr(self, f"{name}_size_cmb", size_cmb)
+        setattr(self, f"{name}_info_var", info)
+
     def _change_page_size(self, evt=None):
         val = self.page_size_cmb.get()
         self.page_size = -1 if val == "Wszystkie" else int(val)
         self.current_page = 0
         if self.current_result_df is not None:
             self._display_dataframe(self.current_result_df)
+
+    def _show_page(self, name: str, tree: ttk.Treeview):
+        """Odświeża wskazany Treeview wg bieżących ustawień paginacji."""
+        df = getattr(self, f"{name}_df")
+        if df is None:  # nic do pokazania
+            return
+
+        size = getattr(self, f"{name}_size")
+        page = getattr(self, f"{name}_page")
+        total = len(df)
+
+        if size == -1:  # 'Wszystkie'
+            start, end = 0, None
+            pages = 1
+            page_num = 1
+        else:
+            pages = max(1, (total - 1) // size + 1)
+            page = min(page, pages - 1)
+            setattr(self, f"{name}_page", page)
+            start = page * size
+            end = start + size
+            page_num = page + 1
+
+        view = df.iloc[start:end]
+
+        tree.delete(*tree.get_children())
+        tree["columns"] = list(view.columns)
+        for col in view.columns:
+            tree.heading(col, text=col)
+            tree.column(col, width=90, anchor="center")
+        for _, row in view.iterrows():
+            tree.insert("", "end", values=list(row))
+
+        info_var = getattr(self, f"{name}_info_var")
+        info_var.set(f"Strona {page_num}/{pages}  "
+                     f"({start + 1}-{min(end or total, total)} z {total})")
+
+        # aktywność strzałek
+        prev_btn = getattr(self, f"{name}_prev_btn")
+        next_btn = getattr(self, f"{name}_next_btn")
+        prev_btn.state(["!disabled"] if page_num > 1 else ["disabled"])
+        next_btn.state(["!disabled"] if page_num < pages else ["disabled"])
 
     def _prev_page(self):
         if self.current_page > 0:
@@ -171,6 +251,28 @@ class MainApp(tk.Tk):
         if self.current_page < max_page:
             self.current_page += 1
             self._display_dataframe(self.current_result_df)
+
+    def _change_page_size_generic(self, evt, name: str, tree: ttk.Treeview):
+        cmb = getattr(self, f"{name}_size_cmb")
+        val = cmb.get()
+        setattr(self, f"{name}_size", -1 if val == "Wszystkie" else int(val))
+        setattr(self, f"{name}_page", 0)
+        self._show_page(name, tree)
+
+    def _prev_generic(self, name: str, tree: ttk.Treeview):
+        if getattr(self, f"{name}_page") > 0:
+            setattr(self, f"{name}_page", getattr(self, f"{name}_page") - 1)
+            self._show_page(name, tree)
+
+    def _next_generic(self, name: str, tree: ttk.Treeview):
+        size = getattr(self, f"{name}_size")
+        if size == -1:  # jedna strona
+            return
+        df = getattr(self, f"{name}_df")
+        max_page = (len(df) - 1) // size
+        if getattr(self, f"{name}_page") < max_page:
+            setattr(self, f"{name}_page", getattr(self, f"{name}_page") + 1)
+            self._show_page(name, tree)
 
     # W metodzie _update_all_columns dodajemy aktualizację dla wizualizacji:
     def _update_all_columns(self, df: pd.DataFrame) -> None:
@@ -1235,13 +1337,15 @@ class MainApp(tk.Tk):
         # Buduj resztę interfejsu klasteryzacji
         self._build_clustering_tab(clustering_tab)
 
+    # ─────────────────────────────────────────────
+    #  >>> 2. ZAKŁADKA - KLASYFIKACJA  <<<
+    # ─────────────────────────────────────────────
     def _build_classification_tab(self, parent: ttk.Frame) -> None:
         main_frame = ttk.Frame(parent);
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
         control = ttk.Frame(main_frame);
         control.pack(fill="x", padx=10, pady=5)
-
         ttk.Label(control, text="Wybierz cechy (Ctrl+klik):").pack(anchor="w")
         self.feature_listbox = tk.Listbox(control, selectmode="multiple", height=7, exportselection=False)
         self.feature_listbox.pack(fill="x", padx=5, pady=5)
@@ -1267,9 +1371,20 @@ class MainApp(tk.Tk):
                                           command=self._run_classification, state="disabled")
         self.run_classif_btn.pack(pady=8)
 
-        # tabela + metryki
+        # --- tabela + paginacja + metryki ---
         self.classification_tree, _, _ = self._make_treeview(main_frame, [])
         self.classification_tree.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # paginacja
+        self._init_paginator("cls")
+        self._build_paginator_ui(
+            parent=main_frame,
+            name="cls",
+            prev_cmd=lambda: self._prev_generic("cls", self.classification_tree),
+            next_cmd=lambda: self._next_generic("cls", self.classification_tree),
+            size_cmd=lambda e: self._change_page_size_generic(e, "cls", self.classification_tree)
+        )
+
         self.classif_metrics = ttk.Label(main_frame, text="", font=("Consolas", 10))
         self.classif_metrics.pack(anchor="w", padx=12)
 
@@ -1284,8 +1399,6 @@ class MainApp(tk.Tk):
         feats_idx = self.feature_listbox.curselection()
         features = [self.feature_listbox.get(i) for i in feats_idx]
         target = self.target_combobox.get()
-
-        # sanity-check – powinno być już sprawdzone przez _check_classif_ready
         if not features or not target:
             messagebox.showerror("Błąd", "Wybierz cechy *i* kolumnę docelową.")
             return
@@ -1306,77 +1419,68 @@ class MainApp(tk.Tk):
 
             preds = classify_and_return_predictions(X, y, test_size=test_size, random_state=seed)
 
-            # tabela
-            self.classification_tree.delete(*self.classification_tree.get_children())
-            self.classification_tree["columns"] = list(preds.columns)
-            for col in preds.columns:
-                self.classification_tree.heading(col, text=col)
-                self.classification_tree.column(col, width=90, anchor="center")
-            for _, row in preds.head(200).iterrows():  # limit 200 wierszy
-                self.classification_tree.insert("", "end", values=list(row))
+            # zapamiętaj DF i pokaż 1. stronę
+            self.cls_df = preds
+            self._show_page("cls", self.classification_tree)
 
-            # metryki (obliczone już w funkcji backendowej → print; policzmy ponownie)
+            # metryki
             _, X_test, _, y_test = train_test_split(
-                pd.get_dummies(X, drop_first=True),
-                y, test_size=test_size, random_state=seed, stratify=y
+                pd.get_dummies(X, drop_first=True), y,
+                test_size=test_size, random_state=seed, stratify=y
             )
             log_acc = accuracy_score(y_test, preds.loc[X_test.index, "logreg_pred"])
             dt_acc = accuracy_score(y_test, preds.loc[X_test.index, "dtree_pred"])
-            self.classif_metrics.config(
-                text=f"LogReg  acc={log_acc:.3f}   |   DTree  acc={dt_acc:.3f}"
-            )
+            self.classif_metrics.config(text=f"LogReg acc={log_acc:.3f} | DTree acc={dt_acc:.3f}")
 
         except Exception as e:
             messagebox.showerror("Błąd klasyfikacji", str(e))
         finally:
             self._set_ready()
 
+    # ─────────────────────────────────────────────
+    #  >>> 3. ZAKŁADKA - KLASTERYZACJA  <<<
+    # ─────────────────────────────────────────────
     def _build_clustering_tab(self, parent: ttk.Frame) -> None:
-        """Zakładka do klasteryzacji danych"""
-        # Główny kontener na elementy klasteryzacji
-        main_frame = ttk.Frame(parent)
+        main_frame = ttk.Frame(parent);
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        control_frame = ttk.Frame(main_frame)
+        control_frame = ttk.Frame(main_frame);
         control_frame.pack(fill="x", padx=10, pady=5)
-
-        # Wybór cech
         ttk.Label(control_frame, text="Wybierz cechy do klasteryzacji (Ctrl+klik):").pack(anchor="w")
-        self.clustering_listbox = tk.Listbox(
-            control_frame, selectmode="multiple", height=6, exportselection=False
-        )
+
+        self.clustering_listbox = tk.Listbox(control_frame, selectmode="multiple", height=7, exportselection=False)
         self.clustering_listbox.pack(fill="x", padx=5, pady=5)
 
-        # Parametry klastera
-        param_frame = ttk.Frame(control_frame)
+        param_frame = ttk.Frame(control_frame);
         param_frame.pack(fill="x", pady=5)
-
         ttk.Label(param_frame, text="Liczba klastrów:").pack(side="left")
-        self.n_clusters = ttk.Spinbox(param_frame, from_=2, to=10, width=5)
+        self.n_clusters = ttk.Spinbox(param_frame, from_=2, to=10, width=5);
         self.n_clusters.set(4)
         self.n_clusters.pack(side="left", padx=5)
-
         ttk.Label(param_frame, text="Random seed:").pack(side="left")
-        self.clust_seed_entry = ttk.Entry(param_frame, width=10)
+        self.clust_seed_entry = ttk.Entry(param_frame, width=8);
         self.clust_seed_entry.insert(0, str(RANDOM_SEED))
         self.clust_seed_entry.pack(side="left", padx=5)
 
-        # Przycisk uruchamiający
-        ttk.Button(
-            control_frame,
-            text="Uruchom klasteryzację",
-            command=self._run_clustering
-        ).pack(pady=5)
+        ttk.Button(control_frame, text="Uruchom klasteryzację",
+                   command=self._run_clustering).pack(pady=8)
 
-        # Tabela wyników
         self.clustering_tree, _, _ = self._make_treeview(main_frame, [])
         self.clustering_tree.pack(fill="both", expand=True, padx=10, pady=5)
 
-        # Pole tekstowe na metryki
-        self.metrics_label = ttk.Label(main_frame, text="", font=("Consolas", 10))
-        self.metrics_label.pack(padx=10, pady=5)
+        # paginacja
+        self._init_paginator("clu")
+        self._build_paginator_ui(
+            parent=main_frame,
+            name="clu",
+            prev_cmd=lambda: self._prev_generic("clu", self.clustering_tree),
+            next_cmd=lambda: self._next_generic("clu", self.clustering_tree),
+            size_cmd=lambda e: self._change_page_size_generic(e, "clu", self.clustering_tree)
+        )
 
-        # Jeśli dane są już załadowane, wypełnij listę cech
+        self.metrics_label = ttk.Label(main_frame, text="", font=("Consolas", 10))
+        self.metrics_label.pack(anchor="w", padx=12)
+
         if self.df is not None:
             self._update_all_columns(self.df)
 
@@ -1391,8 +1495,8 @@ class MainApp(tk.Tk):
             messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
             return
 
-        feature_indices = self.clustering_listbox.curselection()
-        features = [self.clustering_listbox.get(i) for i in feature_indices]
+        feat_idx = self.clustering_listbox.curselection()
+        features = [self.clustering_listbox.get(i) for i in feat_idx]
         if not features:
             messagebox.showerror("Błąd", "Wybierz cechy do klasteryzacji!")
             return
@@ -1405,23 +1509,18 @@ class MainApp(tk.Tk):
             X = self.df[features]
             df_with_clusters, metrics = cluster_kmeans(X, n_clusters=n_clusters, seed=seed)
 
-            self.clustering_tree.delete(*self.clustering_tree.get_children())
-            self.clustering_tree["columns"] = list(df_with_clusters.columns)
-            for col in df_with_clusters.columns:
-                self.clustering_tree.heading(col, text=col)
-                self.clustering_tree.column(col, width=100, anchor="center")
-            for _, row in df_with_clusters.head(50).iterrows():
-                self.clustering_tree.insert("", "end", values=list(row))
+            self.clu_df = df_with_clusters
+            self._show_page("clu", self.clustering_tree)
 
-            self.metrics_label.config(
-                text=(f"Inertia: {metrics['inertia']:.2f}\n"
-                      f"Silhouette: {metrics['silhouette']:.4f}"
-                      if metrics["silhouette"] else "Silhouette: brak")
-            )
+            txt = f"Inertia: {metrics['inertia']:.2f}"
+            txt += f"   |   Silhouette: {metrics['silhouette']:.4f}" if metrics["silhouette"] else "   |   Silhouette: brak"
+            self.metrics_label.config(text=txt)
+
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
         finally:
             self._set_ready()
+
 
 
 
