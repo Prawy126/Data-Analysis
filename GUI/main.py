@@ -64,6 +64,11 @@ class MainApp(tk.Tk):
                                     relief="sunken", anchor="w", padding=(6, 2))
         self.status_bar.pack(side="bottom", fill="x")
 
+        #  POD SYSTEMEM STATUSU …
+        self.page_size = 100  # domyślny rozmiar strony
+        self.current_page = 0  # numer strony (0-indeks)
+        self._pagination_df_id = None  # identyfikacja DataFrame dla paginacji
+
         # Załaduj pierwszą zakładkę
         self._load_pre()
 
@@ -120,6 +125,52 @@ class MainApp(tk.Tk):
 
         ttk.Button(frm, text="Wczytaj plik CSV", command=choose).pack(side="left")
         ttk.Label(frm, textvariable=info).pack(side="left", padx=10)
+
+    # ─────────────────────────────────────────────
+    #  Paginacja wyników
+    # ─────────────────────────────────────────────
+    def _setup_pagination_controls(self, parent: tk.Widget) -> None:
+        nav = ttk.Frame(parent)
+        nav.pack(fill="x", padx=10, pady=(0, 6))
+
+        self.prev_btn = ttk.Button(nav, text="« Poprzednia", width=12,
+                                   command=self._prev_page)
+        self.prev_btn.pack(side="left")
+
+        self.next_btn = ttk.Button(nav, text="Następna »", width=12,
+                                   command=self._next_page)
+        self.next_btn.pack(side="left", padx=(6, 0))
+
+        ttk.Label(nav, text=" |  Rekordów na stronę:").pack(side="left", padx=6)
+
+        self.page_size_cmb = ttk.Combobox(nav, width=6, state="readonly",
+                                          values=["50", "100", "200", "500", "Wszystkie"])
+        self.page_size_cmb.set(str(self.page_size))
+        self.page_size_cmb.bind("<<ComboboxSelected>>", self._change_page_size)
+        self.page_size_cmb.pack(side="left")
+
+        self.page_info_var = tk.StringVar(value="")
+        ttk.Label(nav, textvariable=self.page_info_var).pack(side="right")
+
+    def _change_page_size(self, evt=None):
+        val = self.page_size_cmb.get()
+        self.page_size = -1 if val == "Wszystkie" else int(val)
+        self.current_page = 0
+        if self.current_result_df is not None:
+            self._display_dataframe(self.current_result_df)
+
+    def _prev_page(self):
+        if self.current_page > 0:
+            self.current_page -= 1
+            self._display_dataframe(self.current_result_df)
+
+    def _next_page(self):
+        if self.current_result_df is None or self.page_size == -1:
+            return
+        max_page = (len(self.current_result_df) - 1) // self.page_size
+        if self.current_page < max_page:
+            self.current_page += 1
+            self._display_dataframe(self.current_result_df)
 
     # W metodzie _update_all_columns dodajemy aktualizację dla wizualizacji:
     def _update_all_columns(self, df: pd.DataFrame) -> None:
@@ -205,6 +256,7 @@ class MainApp(tk.Tk):
         # Tabela wyników
         self.result_tree, ybar, xbar = self._make_treeview(tab, [])
         self.result_tree.pack(fill="both", expand=True, padx=10, pady=10)
+        self._setup_pagination_controls(tab)
 
         # Przycisk zapisu
         self.save_btn = ttk.Button(tab, text="Zapisz wynik", state="disabled", command=self._save_result)
@@ -268,18 +320,44 @@ class MainApp(tk.Tk):
         finally:
             self._set_ready()
 
-    def _display_dataframe(self, df: pd.DataFrame, max_rows: int = 100) -> None:
-        """Aktualizacja Treeview – pokazuje maks. `max_rows` wierszy."""
-        self.result_tree.delete(*self.result_tree.get_children())
-        df_show = df.head(max_rows)
+    def _display_dataframe(self, df: pd.DataFrame) -> None:
+        """Pokazuje fragment DataFrame zależnie od paginacji."""
+        # Jeśli to nowy DF → reset strony
+        if id(df) != self._pagination_df_id:
+            self._pagination_df_id = id(df)
+            self.current_page = 0
 
+        total_len = len(df)
+        if self.page_size == -1:  # „Wszystkie”
+            start, end = 0, None
+            total_pages = 1
+            page_num = 1
+        else:
+            total_pages = max(1, (total_len - 1) // self.page_size + 1)
+            self.current_page = min(self.current_page, total_pages - 1)
+            start = self.current_page * self.page_size
+            end = start + self.page_size
+            page_num = self.current_page + 1
+
+        df_show = df.iloc[start:end]
+
+        # Odśwież Treeview
+        self.result_tree.delete(*self.result_tree.get_children())
         self.result_tree["columns"] = list(df_show.columns)
         for col in df_show.columns:
             self.result_tree.heading(col, text=col)
             self.result_tree.column(col, width=100, anchor="center")
-
         for _, row in df_show.iterrows():
             self.result_tree.insert("", "end", values=list(row))
+
+        # Aktualizacja nawigacji
+        self.page_info_var.set(f"Strona {page_num}/{total_pages}  "
+                               f"(rekordy {start + 1}-{min(end or total_len, total_len)} "
+                               f"z {total_len})")
+
+        # dezaktywacja guzików jeśli trzeba
+        self.prev_btn.state(["!disabled"] if page_num > 1 else ["disabled"])
+        self.next_btn.state(["!disabled"] if page_num < total_pages else ["disabled"])
 
     def _save_result(self) -> None:
         """Zapis wyniku do CSV"""
