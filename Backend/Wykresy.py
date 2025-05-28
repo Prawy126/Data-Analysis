@@ -139,16 +139,29 @@ def rysuj_wykres(
         explode[sizes.index(max(sizes))] = 0.15 if len(sizes) > 1 else 0
 
         ax.clear()  # Wyczyść oś przed rysowaniem wykresu kołowego
-        wedges, texts, autotexts = ax.pie(
-            sizes, labels=labels, autopct='%1.1f%%',
-            startangle=90, explode=explode,
+
+        # Poprawiono obsługę wartości zwracanych przez ax.pie
+        wedges = ax.pie(
+            sizes,
+            labels=None,  # Usunięto etykiety z wykresu
+            autopct=None,  # Usunięto procentowe podpisy z wykresu
+            startangle=90,
+            explode=explode,
             colors=sns.color_palette(palette, n_colors=len(sizes)),
-            wedgeprops=dict(width=0.4)
-        )
+            wedgeprops=dict(width=0.4, edgecolor='white')  # Dodano biały kontur dla lepszego wyglądu
+        )[0]  # Pobieramy tylko pierwszy element (wedges)
+
         ax.axis('equal')
+
+        # Poprawiona legenda z lepszym formatowaniem
+        legend_labels = [f"{label} ({size:.1f}%)" for label, size in zip(labels, sizes)]
         ax.legend(
-            wedges, labels, title="Kategorie",
-            loc="center left", bbox_to_anchor=(1, 0, 0.5, 1)
+            wedges, legend_labels,
+            title="Kategorie",
+            loc="center left",
+            bbox_to_anchor=(1, 0, 0.5, 1),
+            frameon=True,  # Dodano ramkę dla lepszej czytelności
+            shadow=True  # Dodano cień dla lepszego wyglądu
         )
 
     else:
