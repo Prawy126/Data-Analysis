@@ -4,6 +4,8 @@ import pandas as pd
 import numpy  as np
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
 
 from Backend.AI import RANDOM_SEED, classify_and_return_predictions, cluster_kmeans
 from Backend.Czyszczenie import ekstrakcja_podtablicy
@@ -1156,51 +1158,43 @@ class MainApp(tk.Tk):
         self._build_clustering_tab(clustering_tab)
 
     def _build_classification_tab(self, parent: ttk.Frame) -> None:
-        """Zakładka do klasyfikacji danych"""
-        # Główny kontener na elementy klasyfikacji
-        main_frame = ttk.Frame(parent)
+        main_frame = ttk.Frame(parent);
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        control_frame = ttk.Frame(main_frame)
-        control_frame.pack(fill="x", padx=10, pady=5)
+        control = ttk.Frame(main_frame);
+        control.pack(fill="x", padx=10, pady=5)
 
-        # Wybór cech i targetu
-        ttk.Label(control_frame, text="Wybierz cechy (Ctrl+klik):").pack(anchor="w")
-        self.feature_listbox = tk.Listbox(
-            control_frame, selectmode="multiple", height=6, exportselection=False
-        )
+        ttk.Label(control, text="Wybierz cechy (Ctrl+klik):").pack(anchor="w")
+        self.feature_listbox = tk.Listbox(control, selectmode="multiple", height=7, exportselection=False)
         self.feature_listbox.pack(fill="x", padx=5, pady=5)
+        self.feature_listbox.bind("<<ListboxSelect>>", self._check_classif_ready)
 
-        ttk.Label(control_frame, text="Wybierz kolumnę docelową:").pack(anchor="w")
-        self.target_combobox = ttk.Combobox(control_frame, state="readonly")
+        ttk.Label(control, text="Kolumna docelowa:").pack(anchor="w")
+        self.target_combobox = ttk.Combobox(control, state="readonly")
         self.target_combobox.pack(fill="x", padx=5, pady=5)
+        self.target_combobox.bind("<<ComboboxSelected>>", self._check_classif_ready)
 
-        # Parametry modelu
-        param_frame = ttk.Frame(control_frame)
-        param_frame.pack(fill="x", pady=5)
-
-        ttk.Label(param_frame, text="Test size:").pack(side="left")
-        self.test_size = ttk.Spinbox(param_frame, from_=0.1, to=0.5, increment=0.05, width=5)
+        pframe = ttk.Frame(control);
+        pframe.pack(fill="x", pady=5)
+        ttk.Label(pframe, text="Test size:").pack(side="left")
+        self.test_size = ttk.Spinbox(pframe, from_=0.1, to=0.5, increment=0.05, width=5);
         self.test_size.set(0.3)
-        self.test_size.pack(side="left", padx=5)
-
-        ttk.Label(param_frame, text="Random seed:").pack(side="left")
-        self.seed_entry = ttk.Entry(param_frame, width=10)
+        self.test_size.pack(side="left", padx=6)
+        ttk.Label(pframe, text="Random seed:").pack(side="left")
+        self.seed_entry = ttk.Entry(pframe, width=8);
         self.seed_entry.insert(0, str(RANDOM_SEED))
-        self.seed_entry.pack(side="left", padx=5)
+        self.seed_entry.pack(side="left", padx=6)
 
-        # Przycisk uruchamiający
-        ttk.Button(
-            control_frame,
-            text="Uruchom klasyfikację",
-            command=self._run_classification
-        ).pack(pady=5)
+        self.run_classif_btn = ttk.Button(control, text="Uruchom klasyfikację",
+                                          command=self._run_classification, state="disabled")
+        self.run_classif_btn.pack(pady=8)
 
-        # Tabela wyników
+        # tabela + metryki
         self.classification_tree, _, _ = self._make_treeview(main_frame, [])
         self.classification_tree.pack(fill="both", expand=True, padx=10, pady=5)
+        self.classif_metrics = ttk.Label(main_frame, text="", font=("Consolas", 10))
+        self.classif_metrics.pack(anchor="w", padx=12)
 
-        # Jeśli dane są już załadowane, wypełnij listę cech
         if self.df is not None:
             self._update_all_columns(self.df)
 
@@ -1209,36 +1203,53 @@ class MainApp(tk.Tk):
             messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
             return
 
-        feature_indices = self.feature_listbox.curselection()
-        features = [self.feature_listbox.get(i) for i in feature_indices]
-        target_col = self.target_combobox.get()
-        if not features or not target_col:
-            messagebox.showerror("Błąd", "Wybierz cechy i kolumnę docelową!")
+        feats_idx = self.feature_listbox.curselection()
+        features = [self.feature_listbox.get(i) for i in feats_idx]
+        target = self.target_combobox.get()
+
+        # sanity-check – powinno być już sprawdzone przez _check_classif_ready
+        if not features or not target:
+            messagebox.showerror("Błąd", "Wybierz cechy *i* kolumnę docelową.")
             return
 
-        test_size = float(self.test_size.get())
-        seed = int(self.seed_entry.get())
+        try:
+            test_size = float(self.test_size.get())
+            seed = int(self.seed_entry.get())
+        except ValueError:
+            messagebox.showerror("Błąd", "Nieprawidłowy test_size lub seed.")
+            return
 
         self._set_busy("Klasyfikacja…")
         try:
             X = self.df[features]
-            y = self.df[target_col]
+            y = self.df[target]
             if y.dtype == object or str(y.dtype).startswith("category"):
                 y = y.astype("category").cat.codes
 
-            preds_df = classify_and_return_predictions(
-                X, y, test_size=test_size, random_state=seed
+            preds = classify_and_return_predictions(X, y, test_size=test_size, random_state=seed)
+
+            # tabela
+            self.classification_tree.delete(*self.classification_tree.get_children())
+            self.classification_tree["columns"] = list(preds.columns)
+            for col in preds.columns:
+                self.classification_tree.heading(col, text=col)
+                self.classification_tree.column(col, width=90, anchor="center")
+            for _, row in preds.head(200).iterrows():  # limit 200 wierszy
+                self.classification_tree.insert("", "end", values=list(row))
+
+            # metryki (obliczone już w funkcji backendowej → print; policzmy ponownie)
+            _, X_test, _, y_test = train_test_split(
+                pd.get_dummies(X, drop_first=True),
+                y, test_size=test_size, random_state=seed, stratify=y
+            )
+            log_acc = accuracy_score(y_test, preds.loc[X_test.index, "logreg_pred"])
+            dt_acc = accuracy_score(y_test, preds.loc[X_test.index, "dtree_pred"])
+            self.classif_metrics.config(
+                text=f"LogReg  acc={log_acc:.3f}   |   DTree  acc={dt_acc:.3f}"
             )
 
-            self.classification_tree.delete(*self.classification_tree.get_children())
-            self.classification_tree["columns"] = list(preds_df.columns)
-            for col in preds_df.columns:
-                self.classification_tree.heading(col, text=col)
-                self.classification_tree.column(col, width=100, anchor="center")
-            for _, row in preds_df.iterrows():
-                self.classification_tree.insert("", "end", values=list(row))
         except Exception as e:
-            messagebox.showerror("Błąd", str(e))
+            messagebox.showerror("Błąd klasyfikacji", str(e))
         finally:
             self._set_ready()
 
@@ -1290,6 +1301,12 @@ class MainApp(tk.Tk):
         # Jeśli dane są już załadowane, wypełnij listę cech
         if self.df is not None:
             self._update_all_columns(self.df)
+
+    def _check_classif_ready(self, evt=None):
+        feats = self.feature_listbox.curselection()
+        tgt = self.target_combobox.get()
+        state = "normal" if feats and tgt else "disabled"
+        self.run_classif_btn.config(state=state)
 
     def _run_clustering(self) -> None:
         if self.df is None:
