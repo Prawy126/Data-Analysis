@@ -28,7 +28,8 @@ class MainApp(tk.Tk):
         # Konfiguracja okna
         self.title("Data Toolkit")
         self.geometry("1000x600")
-        self.minsize(820, 480)
+        #self.minsize(820, 480)
+        self.state('zoomed')
 
         # Zmienne aplikacji
         self.current_result_df: pd.DataFrame | None = None
@@ -104,7 +105,11 @@ class MainApp(tk.Tk):
     #  Wspólne: loader CSV + pomoc
     # ──────────────────────────────────────────────────────────────
     def _add_loader(self, parent: tk.Widget, on_success=None) -> None:
-        """Przycisk + etykieta. on_success(df) wywoływane po udanym wczytaniu."""
+        """
+        Przycisk "Wczytaj plik CSV" + zarządzanie pulsującym paskiem stanu.
+        Po wczytaniu CSV **zawsze** wywołujemy self._update_all_columns(df),
+        a następnie, jeśli przekazano dodatkowy on_success, wywołujemy go.
+        """
         frm = ttk.Frame(parent)
         frm.pack(fill="x", padx=10, pady=(5, 12))
 
@@ -115,20 +120,29 @@ class MainApp(tk.Tk):
             )
             if not fp:
                 return
+
+            # Ustawiamy stan „zajęty” w pasku statusu
             self._set_busy("Wczytywanie pliku…")
+
+            # Próba wczytania
             df = wczytaj_csv(fp, separator=None, wyswietlaj_informacje=True)
             if df is None:
                 self._set_ready()
                 messagebox.showerror("Błąd", "Nie udało się wczytać pliku.")
                 return
+
+            # ------------ zapisujemy globalnie ------------
             self.df, self.path = df, fp
-            # Aktualizuj globalną zmienną z informacją o pliku
             self.file_info_var.set(f"Wczytano: {fp.split('/')[-1]} ({len(df)}×{len(df.columns)})")
-            messagebox.showinfo("OK", "Plik wczytany!")
-            if on_success:
+
+            # ------------ GLOBALNY REFRESH (najpierw!) ------------
+            self._update_all_columns(df)
+
+            # ------------ opcjonalny CALLBACK lokalny – jeśli jest inny od _update_all_columns ------------
+            if on_success is not None and on_success is not self._update_all_columns:
                 on_success(df)
-            else:
-                self._update_all_columns(df)
+
+            messagebox.showinfo("OK", "Plik wczytany pomyślnie!")
             self._set_ready()
 
         ttk.Button(frm, text="Wczytaj plik CSV", command=choose).pack(anchor="w")
@@ -283,15 +297,18 @@ class MainApp(tk.Tk):
 
     # W metodzie _update_all_columns dodajemy aktualizację dla wizualizacji:
     def _update_all_columns(self, df: pd.DataFrame) -> None:
-        """Aktualizuje wszystkie listy kolumn w aplikacji"""
-        # Aktualizacja zakładek pre-processingu
+        """
+        Odśwież wszystkie comboboxy/listboxy w całym GUI po wczytaniu nowego DataFrame.
+        Musi być wywołane **zawsze** po wczytaniu CSV.
+        """
+        # 1) Zakładka PRE-PROCESSING: czyścimy stare dane i wypełniamy je nowymi
         self._clear_preprocessing_data(df)
 
-        # Aktualizacja zakładki wizualizacji
+        # 2) Zakładka WIZUALIZACJE
         if hasattr(self, 'x_col'):
             self._update_visualization_columns(df)
 
-        # Aktualizacja AI
+        # 3) Zakładka AI – klasyfikacja
         if hasattr(self, 'feature_listbox'):
             self.feature_listbox.delete(0, tk.END)
             for col in df.columns:
@@ -300,6 +317,7 @@ class MainApp(tk.Tk):
         if hasattr(self, 'target_combobox'):
             self.target_combobox["values"] = df.columns.tolist()
 
+        # 4) Zakładka AI – klasteryzacja
         if hasattr(self, 'clustering_listbox'):
             self.clustering_listbox.delete(0, tk.END)
             for col in df.columns:
@@ -322,30 +340,30 @@ class MainApp(tk.Tk):
         self.y_col.set(numeric_cols[0] if numeric_cols else "")
         self.hue_col.set("brak")
 
-
     def _load_pre(self) -> None:
+        """
+        Buduje zakładkę "Cleaning" – pre-processing.
+        Zamiast przekazywać dowolny on_success, zawsze podajemy on_success=self._update_all_columns.
+        """
         self._clear_tabs()
         tab = ttk.Frame(self.nb)
         self.nb.add(tab, text="Cleaning")
 
-        # Loader CSV
-        self._add_loader(tab, on_success=self._clear_preprocessing_data)
+        # ===================== nowa definicja loadera =====================
+        self._add_loader(tab, on_success=self._update_all_columns)
 
-        # Kontener główny z zakładkami
+        # Kontenery z podzakładkami (Ekstrakcja / Duplikaty / Braki / Kodowanie / Skalowanie / Zamiana wartości)
         notebook = ttk.Notebook(tab)
         notebook.pack(fill='both', expand=True, padx=10, pady=10)
 
-        # Zakładka 1 - Ekstrakcja podtablicy
         extract_frame = ttk.Frame(notebook)
         self._build_extraction_tab(extract_frame)
         notebook.add(extract_frame, text="Ekstrakcja")
 
-        # Zakładka 2 - Usuwanie duplikatów
         duplicates_frame = ttk.Frame(notebook)
         self._build_duplicates_tab(duplicates_frame)
         notebook.add(duplicates_frame, text="Duplikaty")
 
-        # Nowa zakładka 3 - Braki danych
         missing_frame = ttk.Frame(notebook)
         self._build_missing_tab(missing_frame)
         notebook.add(missing_frame, text="Braki danych")
@@ -362,12 +380,12 @@ class MainApp(tk.Tk):
         self._build_value_replacement_tab(replace_frame)
         notebook.add(replace_frame, text="Zamiana wartości")
 
-        # Tabela wyników
+        # Tabela wyników + paginacja
         self.result_tree, ybar, xbar = self._make_treeview(tab, [])
         self.result_tree.pack(fill="both", expand=True, padx=10, pady=10)
         self._setup_pagination_controls(tab)
 
-        # Przycisk zapisu
+        # Przycisk „Zapisz wynik”
         self.save_btn = ttk.Button(tab, text="Zapisz wynik", state="disabled", command=self._save_result)
         self.save_btn.pack(side="right", padx=10, pady=5)
 
@@ -988,27 +1006,37 @@ class MainApp(tk.Tk):
 
     # ---------- Statystyki liczbowe ---------------------------------------
     def _build_numeric_stats_tab(self) -> None:
-        tab = ttk.Frame(self.nb);  self.nb.add(tab, text="Statystyki liczbowe")
+        """
+        Zakładka "Statystyki liczbowe".  Użytkownik wybiera kolumny numeryczne,
+        naciska 'Oblicz statystyki'.  Lista kolumn powinna być odświeżona po wczytaniu CSV.
+        """
+        tab = ttk.Frame(self.nb)
+        self.nb.add(tab, text="Statystyki liczbowe")
 
-        # lista kolumn numerycznych (aktualizowana po wczytaniu CSV)
+        # Lista dostępnych kolumn numerycznych
         lbl_cols = ttk.Label(tab, text="Wybierz kolumny (Ctrl+klik):")
         lbl_cols.pack(anchor="w", padx=10)
 
         listbox = tk.Listbox(tab, selectmode="multiple", height=6, exportselection=False)
         listbox.pack(fill="x", padx=10, pady=(0, 10))
 
-        # tabela wyników
+        # Tabela wyników
         cols = ("kolumna", "średnia", "mediana", "min", "max", "std", "liczba")
         tree, ybar, xbar = self._make_treeview(tab, cols)
         tree.pack(fill="both", expand=True, padx=10, pady=5)
 
         def update_selector(df: pd.DataFrame) -> None:
+            """
+            Callback: uzupełnia listbox nazwami kolumn numerycznych.
+            Wywoływane zawsze po wczytaniu CSV (przez _update_all_columns).
+            """
             listbox.delete(0, tk.END)
             numeric = df.select_dtypes(include=[np.number]).columns
             for col in numeric:
                 listbox.insert(tk.END, col)
 
         def run() -> None:
+            """Funkcja wywoływana po kliknięciu 'Oblicz statystyki'."""
             if not self.path:
                 messagebox.showwarning("Uwaga", "Najpierw wczytaj plik.")
                 return
@@ -1016,7 +1044,7 @@ class MainApp(tk.Tk):
             _, wyniki = analizuj_dane_numeryczne(self.path,
                                                  wybrane_kolumny=selection or None)
 
-            # odśwież Treeview
+            # Odśwież Treeview
             for row in tree.get_children():
                 tree.delete(row)
             for kol, staty in wyniki.items():
@@ -1030,34 +1058,37 @@ class MainApp(tk.Tk):
                     staty["liczba_wartości"]
                 ))
 
-        ttk.Button(tab, text="Oblicz statystyki", command=run)\
+        ttk.Button(tab, text="Oblicz statystyki", command=run) \
             .pack(anchor="w", padx=10, pady=(0, 6))
 
-        # loader + callback, żeby lista kolumn odświeżała się automatycznie
+        # ========== ARMATURA: loader CSV (tylko do odświeżenia listy) ==========
         self._add_loader(tab, on_success=update_selector)
 
     def _build_non_numeric_stats_tab(self) -> None:
-        """Zakładka do analizy statystyk nielicyznych"""
+        """
+        Zakładka "Statystyki nieliczone" – pokazuje informacje o kolumnach kategorycznych.
+        Po wczytaniu CSV musi odświeżyć tabelę kolumn nieliczących.
+        """
         tab = ttk.Frame(self.nb)
         self.nb.add(tab, text="Statystyki nieliczone")
 
-        # Tytuł sekcji
-        ttk.Label(tab, text="Statystyki dla kolumn nielicyznych:", font=('Helvetica', 10, 'bold')).pack(anchor="w",
-                                                                                                        padx=10,
-                                                                                                        pady=(10, 5))
+        # ARMATURA: loader CSV do odświeżenia (wywoła self._update_all_columns)
+        self._add_loader(tab, on_success=self._update_all_columns)
+
+        # Tytuł
+        ttk.Label(tab, text="Statystyki dla kolumn nielicznych:",
+                  font=('Helvetica', 10, 'bold')).pack(anchor="w", padx=10, pady=(10, 5))
 
         # Tabela wyników
-        cols = ("kolumna", "liczba wystąpień", "unikalne wartości", "najczęstsza wartość", "częstotliwość [%]",
-                "wypełnienie [%]")
+        cols = ("kolumna", "liczba wystąpień", "unikalne wartości",
+                "najczęstsza wartość", "częstotliwość [%]", "wypełnienie [%]")
         tree, ybar, xbar = self._make_treeview(tab, cols)
         tree.pack(fill="both", expand=True, padx=10, pady=5)
 
         # Przycisk analizy
-        ttk.Button(tab, text="Oblicz statystyki nieliczone", command=lambda: self._run_non_numeric_stats(tree)).pack(
-            anchor="w", padx=10, pady=(0, 6))
-
-        # Dodanie loadera CSV
-        self._add_loader(tab, on_success=lambda df: None)  # Loader tylko do wczytania danych
+        ttk.Button(tab, text="Oblicz statystyki nieliczone",
+                   command=lambda: self._run_non_numeric_stats(tree)) \
+            .pack(anchor="w", padx=10, pady=(0, 6))
 
     def _run_non_numeric_stats(self, tree: ttk.Treeview) -> None:
         if self.df is None:
@@ -1085,25 +1116,27 @@ class MainApp(tk.Tk):
     # ---------- Korelacje -------------------------------------------------
     # wewnątrz klasy MainApp
     def _build_corr_tab(self) -> None:
-        """Zakładka 'Korelacje' – macierz Pearsona / Spearmana w Treeview."""
-        import numpy as np
+        """
+        Zakładka "Korelacje": użytkownik wybiera metodę (Pearson/Spearman),
+        naciska 'Oblicz korelacje', a następnie widzi macierz korelacji.
+        """
         tab = ttk.Frame(self.nb)
         self.nb.add(tab, text="Korelacje")
 
-        # ---------- wybór metody ------------
+        # ARMATURA: loader CSV (odświeży listy kolumn, jeśli potrzebne)
+        self._add_loader(tab, on_success=self._update_all_columns)
+
+        # Wybór metody
         method_var = tk.StringVar(value="pearson")
         frm_select = ttk.Frame(tab);
         frm_select.pack(anchor="w", padx=10, pady=(0, 8))
-        ttk.Radiobutton(frm_select, text="Pearson", variable=method_var,
-                        value="pearson").pack(side="left")
-        ttk.Radiobutton(frm_select, text="Spearman", variable=method_var,
-                        value="spearman").pack(side="left")
+        ttk.Radiobutton(frm_select, text="Pearson", variable=method_var, value="pearson").pack(side="left")
+        ttk.Radiobutton(frm_select, text="Spearman", variable=method_var, value="spearman").pack(side="left")
 
-        # ---------- Treeview (początkowo puste) ------------
+        # Pusta tabela (Treeview)
         tree, ybar, xbar = self._make_treeview(tab, cols=())
         tree.pack(fill="both", expand=True, padx=10, pady=5)
 
-        # ---------- akcja 'Oblicz korelacje' ----------
         def run_corr() -> None:
             if not self.path:
                 messagebox.showwarning("Uwaga", "Najpierw wczytaj plik CSV.")
@@ -1118,10 +1151,9 @@ class MainApp(tk.Tk):
                 messagebox.showinfo("Info", "Brak danych numerycznych do korelacji.")
                 return
 
-            # ---- konfiguracja kolumn Treeview ----
-            cols = ("Variable", *df_corr.columns)  # ← dodatkowa kolumna z lewej
+            # Konfiguracja kolumn w Treeview
+            cols = ("Variable", *df_corr.columns)
             tree.config(columns=cols, show="headings")
-
             tree.heading("Variable", text="Variable")
             tree.column("Variable", width=130, anchor="w")
 
@@ -1129,43 +1161,36 @@ class MainApp(tk.Tk):
                 tree.heading(col, text=col)
                 tree.column(col, width=90, anchor="center")
 
-            # wyczyść stare wiersze
+            # Wypełniamy wiersze
             tree.delete(*tree.get_children())
-
-            # dodaj nowe wiersze (nazwa wiersza + wartości)
             for row_name, values in df_corr.iterrows():
-                tree.insert(
-                    "", "end",
-                    values=(row_name, *np.round(values.values, 4))
-                )
+                tree.insert("", "end", values=(row_name, *np.round(values.values, 4)))
 
         ttk.Button(tab, text="Oblicz korelacje", command=run_corr) \
             .pack(anchor="w", padx=10, pady=(0, 6))
 
-        # ---------- loader pliku CSV ----------
-        self._add_loader(tab)  # przycisk 'Wczytaj plik CSV'
-
     def _build_visualization_tab(self) -> None:
-        """Zakładka do tworzenia wizualizacji (z kontrolkami zależnymi od typu)."""
+        """
+        Zakładka "Wizualizacje": pozwala wybrać typ wykresu, kolumny X/Y, opcje
+        (regresja, sortowanie, limity w pie, itp.) i narysować wykres w polu obok.
+        """
         tab = ttk.Frame(self.nb)
         self.nb.add(tab, text="Wizualizacje")
 
-        # Loader CSV
-        self._add_loader(tab, on_success=lambda df: self._update_visualization_columns(df))
+        # ARMATURA: loader CSV (globalny refresh kolumn)
+        self._add_loader(tab, on_success=self._update_visualization_columns)
 
-        # Główny układ
+        # Główny układ: lewa część = panel kontroli, prawa część = kanwa wykresu
         main_frame = ttk.Frame(tab);
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # ───────── panel kontrolny ─────────
+        # ────── panel kontrolny ──────
         control_frame = ttk.Frame(main_frame);
         control_frame.pack(side="left", fill="y", padx=10)
 
         ttk.Label(control_frame, text="Typ wykresu:").pack(anchor="w")
-        self.chart_type = ttk.Combobox(
-            control_frame, state="readonly",
-            values=["scatter", "line", "bar", "pie"]
-        )
+        self.chart_type = ttk.Combobox(control_frame, state="readonly",
+                                       values=["scatter", "line", "bar", "pie"])
         self.chart_type.set("scatter")
         self.chart_type.pack(fill="x", pady=5)
         self.chart_type.bind("<<ComboboxSelected>>", self._update_chart_options)
@@ -1182,10 +1207,10 @@ class MainApp(tk.Tk):
         self.hue_col = ttk.Combobox(control_frame, state="readonly")
         self.hue_col.pack(fill="x", pady=2)
 
-        self.options_frame = ttk.Frame(control_frame);
+        self.options_frame = ttk.Frame(control_frame)
         self.options_frame.pack(fill="x", pady=6)
 
-        # Tytuły / etykiety
+        # Pola na tytuł i etykiety
         for lbl, attr in [("Tytuł wykresu:", "chart_title"),
                           ("Etykieta X:", "x_label"),
                           ("Etykieta Y:", "y_label")]:
@@ -1196,15 +1221,15 @@ class MainApp(tk.Tk):
         ttk.Button(control_frame, text="Generuj wykres", command=self._generate_plot) \
             .pack(side="bottom", pady=10)
 
-        # ───────── obszar rysunku ─────────
+        # ────── obszar rysunku (kanwa Matplotlib) ──────
         self.figure = plt.figure(figsize=(8, 6))
         self.canvas = FigureCanvasTkAgg(self.figure, master=main_frame)
         self.canvas.get_tk_widget().pack(side="right", fill="both", expand=True)
 
-        # Po pierwszym uruchomieniu
+        # Po pierwszym uruchomieniu – jeśli self.df już istnieje, ustaw kolumny
         if self.df is not None:
             self._update_visualization_columns(self.df)
-        self._update_chart_options()  # ustawia stany kontrolek
+        self._update_chart_options()
 
     def _update_chart_options(self, event=None) -> None:
         """Pokazuje tylko te opcje, które pasują do wybranego typu wykresu."""
@@ -1353,8 +1378,15 @@ class MainApp(tk.Tk):
     #  >>> 2. ZAKŁADKA - KLASYFIKACJA  <<<
     # ─────────────────────────────────────────────
     def _build_classification_tab(self, parent: ttk.Frame) -> None:
+        """
+        Buduje interfejs do klasyfikacji: wybór cech, kolumna docelowa, itp.
+        Lista cech i lista kolumn docelowych będą odświeżone przez _update_all_columns.
+        """
         main_frame = ttk.Frame(parent);
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # ARMATURA: loader CSV, aby po wczytaniu globalnie załadować kolumny do listboxów
+        self._add_loader(parent, on_success=self._update_all_columns)
 
         control = ttk.Frame(main_frame);
         control.pack(fill="x", padx=10, pady=5)
@@ -1371,19 +1403,19 @@ class MainApp(tk.Tk):
         pframe = ttk.Frame(control);
         pframe.pack(fill="x", pady=5)
         ttk.Label(pframe, text="Test size:").pack(side="left")
-        self.test_size = ttk.Spinbox(pframe, from_=0.1, to=0.5, increment=0.05, width=5);
-        self.test_size.set(0.3)
+        self.test_size = ttk.Spinbox(pframe, from_=0.1, to=0.5, increment=0.05, width=5)
+        self.test_size.set(0.3);
         self.test_size.pack(side="left", padx=6)
         ttk.Label(pframe, text="Random seed:").pack(side="left")
-        self.seed_entry = ttk.Entry(pframe, width=8);
-        self.seed_entry.insert(0, str(RANDOM_SEED))
+        self.seed_entry = ttk.Entry(pframe, width=8)
+        self.seed_entry.insert(0, str(RANDOM_SEED));
         self.seed_entry.pack(side="left", padx=6)
 
         self.run_classif_btn = ttk.Button(control, text="Uruchom klasyfikację",
                                           command=self._run_classification, state="disabled")
         self.run_classif_btn.pack(pady=8)
 
-        # --- tabela + paginacja + metryki ---
+        # ---- tabela wyników + paginacja + metryki ----
         self.classification_tree, _, _ = self._make_treeview(main_frame, [])
         self.classification_tree.pack(fill="both", expand=True, padx=10, pady=5)
 
@@ -1399,9 +1431,6 @@ class MainApp(tk.Tk):
 
         self.classif_metrics = ttk.Label(main_frame, text="", font=("Consolas", 10))
         self.classif_metrics.pack(anchor="w", padx=12)
-
-        if self.df is not None:
-            self._update_all_columns(self.df)
 
     def _run_classification(self) -> None:
         if self.df is None:
@@ -1453,8 +1482,15 @@ class MainApp(tk.Tk):
     #  >>> 3. ZAKŁADKA - KLASTERYZACJA  <<<
     # ─────────────────────────────────────────────
     def _build_clustering_tab(self, parent: ttk.Frame) -> None:
+        """
+        Zakładka Klasteryzacja: wybór kolumn do klasteryzacji, liczbę klastrów, itp.
+        Lista kolumn jest odświeżana przez _update_all_columns.
+        """
         main_frame = ttk.Frame(parent);
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # ARMATURA: loader CSV (odświeży listę cech)
+        self._add_loader(parent, on_success=self._update_all_columns)
 
         control_frame = ttk.Frame(main_frame);
         control_frame.pack(fill="x", padx=10, pady=5)
@@ -1466,12 +1502,12 @@ class MainApp(tk.Tk):
         param_frame = ttk.Frame(control_frame);
         param_frame.pack(fill="x", pady=5)
         ttk.Label(param_frame, text="Liczba klastrów:").pack(side="left")
-        self.n_clusters = ttk.Spinbox(param_frame, from_=2, to=10, width=5);
-        self.n_clusters.set(4)
+        self.n_clusters = ttk.Spinbox(param_frame, from_=2, to=10, width=5)
+        self.n_clusters.set(4);
         self.n_clusters.pack(side="left", padx=5)
         ttk.Label(param_frame, text="Random seed:").pack(side="left")
-        self.clust_seed_entry = ttk.Entry(param_frame, width=8);
-        self.clust_seed_entry.insert(0, str(RANDOM_SEED))
+        self.clust_seed_entry = ttk.Entry(param_frame, width=8)
+        self.clust_seed_entry.insert(0, str(RANDOM_SEED));
         self.clust_seed_entry.pack(side="left", padx=5)
 
         ttk.Button(control_frame, text="Uruchom klasteryzację",
@@ -1492,9 +1528,6 @@ class MainApp(tk.Tk):
 
         self.metrics_label = ttk.Label(main_frame, text="", font=("Consolas", 10))
         self.metrics_label.pack(anchor="w", padx=12)
-
-        if self.df is not None:
-            self._update_all_columns(self.df)
 
     def _check_classif_ready(self, evt=None):
         feats = self.feature_listbox.curselection()
@@ -1533,5 +1566,11 @@ class MainApp(tk.Tk):
         finally:
             self._set_ready()
 
+    def on_close(self):
+        self.destroy()
+        plt.close('all')  # zamyka wszystkie figury matplotlib
+
 if __name__ == "__main__":
-    MainApp().mainloop()
+    app = MainApp()
+    app.protocol("WM_DELETE_WINDOW", app.on_close)
+    app.mainloop()
