@@ -5,7 +5,6 @@ import seaborn as sns
 
 from Dane.Dane import wczytaj_csv
 
-
 def rysuj_wykres(
         df: pd.DataFrame,
         typ_wykresu: str = "scatter",
@@ -62,7 +61,7 @@ def rysuj_wykres(
         if regline:
             sns.regplot(
                 data=df, x=kolumna_x, y=kolumna_y,
-                scatter=False, ci=ci, color="grey", ax=ax
+                scatter=False, errorbar=None, color="grey", ax=ax
             )
         ax.grid(True)
         ax.set_xlabel(etykieta_x or kolumna_x)
@@ -80,7 +79,7 @@ def rysuj_wykres(
             x=kolumna_x if orient == "v" else kolumna_y,
             y=kolumna_y if orient == "v" else kolumna_x,
             orient=orient,
-            ci=ci,
+            errorbar=None,
             ax=ax
         )
         ax.set_xlabel(etykieta_x or kolumna_x)
@@ -102,19 +101,6 @@ def rysuj_wykres(
         ax.grid(True)
         ax.set_xlabel(etykieta_x or kolumna_x)
         ax.set_ylabel(etykieta_y or kolumna_y)
-
-    # Heatmap
-    elif typ_wykresu == "heatmap":
-        corr = df.corr()
-        mask = np.triu(np.ones_like(corr, dtype=bool))
-        sns.heatmap(
-            corr, mask=mask, annot=True,
-            cmap="coolwarm", fmt=".2f",
-            linewidths=0.5, vmin=-1, vmax=1,
-            ax=ax
-        )
-        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
-        ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
 
     # Pie
     elif typ_wykresu == "pie":

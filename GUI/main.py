@@ -315,12 +315,12 @@ class MainApp(tk.Tk):
         # Aktualizuj comboboxy
         self.x_col["values"] = cols
         self.y_col["values"] = numeric_cols
-        self.hue_col["values"] = cat_cols
+        self.hue_col["values"] = ["brak"] + cat_cols
 
         # Ustaw domyślne wartości jeśli istnieją
         self.x_col.set(cols[0] if cols else "")
         self.y_col.set(numeric_cols[0] if numeric_cols else "")
-        self.hue_col.set(cat_cols[0] if cat_cols else "")
+        self.hue_col.set("brak")
 
 
     def _load_pre(self) -> None:
@@ -1164,7 +1164,7 @@ class MainApp(tk.Tk):
         ttk.Label(control_frame, text="Typ wykresu:").pack(anchor="w")
         self.chart_type = ttk.Combobox(
             control_frame, state="readonly",
-            values=["scatter", "line", "bar", "heatmap", "pie"]
+            values=["scatter", "line", "bar", "pie"]
         )
         self.chart_type.set("scatter")
         self.chart_type.pack(fill="x", pady=5)
@@ -1279,7 +1279,7 @@ class MainApp(tk.Tk):
                 "typ_wykresu": self.chart_type.get(),
                 "kolumna_x": self.x_col.get() or None,
                 "kolumna_y": self.y_col.get() if self.chart_type.get() != "pie" else None,
-                "kolumna_hue": self.hue_col.get() or None,
+                "kolumna_hue": self.hue_col.get() if self.hue_col.get() != "brak" else None,
                 "nazwa_wykresu": self.chart_title.get() or None,
                 "etykieta_x": self.x_label.get() or None,
                 "etykieta_y": self.y_label.get() or None,
