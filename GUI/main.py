@@ -35,6 +35,13 @@ class MainApp(tk.Tk):
         self.df: pd.DataFrame | None = None
         self.path: str | None = None
 
+        # Nowa zmienna dla informacji o pliku
+        self.file_info_var = tk.StringVar(value="Brak wczytanego pliku")
+
+        # Dedykowana etykieta dla informacji o pliku (nad Notebook)
+        self.file_info_label = ttk.Label(self, textvariable=self.file_info_var, font=("Helvetica", 10))
+        self.file_info_label.pack(anchor="w", padx=10, pady=(5, 0))
+
         # Zmienne kontrolne wykresów / AI
         self.regline_var = tk.BooleanVar()
         self.sort_values_var = tk.BooleanVar()
@@ -58,13 +65,13 @@ class MainApp(tk.Tk):
         self.nb = ttk.Notebook(self)
         self.nb.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Pasek stanu + flaga busy
+        # Pasek stanu
         self.status_var = tk.StringVar(value="Gotowe")
         self.status_bar = ttk.Label(self, textvariable=self.status_var,
                                     relief="sunken", anchor="w", padding=(6, 2))
         self.status_bar.pack(side="bottom", fill="x")
 
-        #  POD SYSTEMEM STATUSU …
+        # POD SYSTEMEM STATUSU …
         self.page_size = 100  # domyślny rozmiar strony
         self.current_page = 0  # numer strony (0-indeks)
         self._pagination_df_id = None  # identyfikacja DataFrame dla paginacji
@@ -98,16 +105,16 @@ class MainApp(tk.Tk):
     # ──────────────────────────────────────────────────────────────
     def _add_loader(self, parent: tk.Widget, on_success=None) -> None:
         """Przycisk + etykieta. on_success(df) wywoływane po udanym wczytaniu."""
-        frm = ttk.Frame(parent);
+        frm = ttk.Frame(parent)
         frm.pack(fill="x", padx=10, pady=(5, 12))
-        info = tk.StringVar(value="(brak pliku)")
 
         def choose() -> None:
             fp = filedialog.askopenfilename(
                 title="Wybierz plik CSV",
                 filetypes=[("CSV", "*.csv"), ("Wszystkie", "*.*")]
             )
-            if not fp: return
+            if not fp:
+                return
             self._set_busy("Wczytywanie pliku…")
             df = wczytaj_csv(fp, separator=None, wyswietlaj_informacje=True)
             if df is None:
@@ -115,7 +122,8 @@ class MainApp(tk.Tk):
                 messagebox.showerror("Błąd", "Nie udało się wczytać pliku.")
                 return
             self.df, self.path = df, fp
-            info.set(f"{fp.split('/')[-1]}  ({len(df)}×{len(df.columns)})")
+            # Aktualizuj globalną zmienną z informacją o pliku
+            self.file_info_var.set(f"Wczytano: {fp.split('/')[-1]} ({len(df)}×{len(df.columns)})")
             messagebox.showinfo("OK", "Plik wczytany!")
             if on_success:
                 on_success(df)
@@ -123,8 +131,7 @@ class MainApp(tk.Tk):
                 self._update_all_columns(df)
             self._set_ready()
 
-        ttk.Button(frm, text="Wczytaj plik CSV", command=choose).pack(side="left")
-        ttk.Label(frm, textvariable=info).pack(side="left", padx=10)
+        ttk.Button(frm, text="Wczytaj plik CSV", command=choose).pack(anchor="w")
 
     # ─────────────────────────────────────────────
     #  Paginacja wyników
@@ -645,6 +652,11 @@ class MainApp(tk.Tk):
 
         if hasattr(self, 'x_col'):
             self._update_columns(df)
+
+        if self.path:
+            self.file_info_var.set(f"Wczytano: {self.path.split('/')[-1]} ({len(df)}×{len(df.columns)})")
+        else:
+            self.file_info_var.set("Brak wczytanego pliku")
 
     def _run_fill_missing(self) -> None:
         if self.df is None:
@@ -1520,11 +1532,6 @@ class MainApp(tk.Tk):
             messagebox.showerror("Błąd", str(e))
         finally:
             self._set_ready()
-
-
-
-
-
 
 if __name__ == "__main__":
     MainApp().mainloop()
