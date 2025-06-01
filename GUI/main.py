@@ -387,7 +387,7 @@ class MainApp(tk.Tk):
 
         # Przycisk „Zapisz wynik”
         self.save_btn = ttk.Button(tab, text="Zapisz wynik", state="disabled", command=self._save_result)
-        self.save_btn.pack(side="right", padx=10, pady=5)
+        self.save_btn.pack(side="right", padx=10, pady=0)
 
     def _build_extraction_tab(self, parent):
         """Zakładka do ekstrakcji podtablicy"""
