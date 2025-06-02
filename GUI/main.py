@@ -90,6 +90,11 @@ class MainApp(tk.Tk):
         self.config(cursor="")
         self.update_idletasks()
 
+    def _on_file_loaded(self, df):
+        self._update_all_columns(df)
+        self._display_dataframe(df)
+        self.save_btn.config(state="normal")
+
     # ─────────────────────────────────────────────
     #  Helpers wizualizacji
     # ─────────────────────────────────────────────
@@ -350,7 +355,7 @@ class MainApp(tk.Tk):
         self.nb.add(tab, text="Cleaning")
 
         # ===================== nowa definicja loadera =====================
-        self._add_loader(tab, on_success=self._update_all_columns)
+        self._add_loader(tab, on_success=self._on_file_loaded)
 
         # Kontenery z podzakładkami (Ekstrakcja / Duplikaty / Braki / Kodowanie / Skalowanie / Zamiana wartości)
         notebook = ttk.Notebook(tab)
