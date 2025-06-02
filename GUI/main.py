@@ -794,8 +794,8 @@ class MainApp(tk.Tk):
                     wyswietlaj_informacje=True
                 )
 
-            if result and 'df_zakodowany' in result:
-                self.current_result_df = result['df_zakodowany']
+            if result and 'df_encoded' in result:
+                self.current_result_df = result['df_encoded']
                 self._display_dataframe(self.current_result_df)
                 self.save_btn.config(state="normal")
                 messagebox.showinfo("Sukces", "Pomyślnie zastosowano kodowanie!")
