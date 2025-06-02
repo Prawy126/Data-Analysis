@@ -597,10 +597,8 @@ class MainApp(tk.Tk):
             'moda': 'Moda',
             'stała': 'Wartość stała'
         }
-
         method_frame = ttk.Frame(control_frame)
         method_frame.pack(fill="x", pady=5)
-
         for i, (key, val) in enumerate(methods.items()):
             ttk.Radiobutton(method_frame, text=val, variable=self.fill_method, value=key).grid(row=0, column=i, padx=5)
 
@@ -609,9 +607,86 @@ class MainApp(tk.Tk):
         ttk.Label(control_frame, text="Wartość stała:").pack(anchor="w", pady=(10, 0))
         self.const_value.pack(fill="x", padx=5)
 
-        # Przycisk wykonania
-        ttk.Button(control_frame, text="Wypełnij braki", command=self._run_fill_missing) \
-            .pack(side="right", padx=5, pady=10)
+        # Przyciski wykonania
+        btn_frame = ttk.Frame(control_frame)
+        btn_frame.pack(fill="x", pady=10)
+        ttk.Button(btn_frame, text="Wypełnij braki", command=self._run_fill_missing) \
+            .pack(side="right", padx=5)
+        ttk.Button(btn_frame, text="Edytuj ręcznie", command=self._edit_selected_row) \
+            .pack(side="right", padx=5)
+
+    def _edit_selected_row(self):
+        # Jeśli nie ma wyniku operacji, użyj oryginalnych danych
+        df_to_edit = self.current_result_df if self.current_result_df is not None else self.df
+        if df_to_edit is None:
+            messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
+            return
+
+        selected_items = self.result_tree.selection()
+        if not selected_items:
+            messagebox.showwarning("Brak wyboru", "Wybierz wiersz do edycji.")
+            return
+
+        item = selected_items[0]
+        item_index = self.result_tree.index(item)
+
+        if self.page_size == -1:
+            start = 0
+        else:
+            start = self.current_page * self.page_size
+        actual_index = start + item_index
+
+        if actual_index >= len(df_to_edit):
+            messagebox.showerror("Błąd", "Nieprawidłowy indeks wiersza.")
+            return
+
+        self._open_edit_dialog(actual_index, df_to_edit)
+
+    def _open_edit_dialog(self, index, df):
+        dialog = tk.Toplevel(self)
+        dialog.title("Edytuj wiersz")
+        dialog.geometry("400x500")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        row_data = df.iloc[index]
+        entries = {}
+
+        for col in df.columns:
+            frame = ttk.Frame(dialog)
+            frame.pack(fill="x", padx=10, pady=2)
+            ttk.Label(frame, text=col).pack(anchor="w")
+            entry = ttk.Entry(frame)
+            entry.insert(0, str(row_data[col]))
+            entry.pack(fill="x")
+            entries[col] = entry
+
+        def save():
+            try:
+                for col, entry in entries.items():
+                    value = entry.get()
+                    dtype = df[col].dtype
+
+                    if pd.api.types.is_integer_dtype(dtype):
+                        df.at[index, col] = int(value)
+                    elif pd.api.types.is_float_dtype(dtype):
+                        df.at[index, col] = float(value)
+                    else:
+                        df.at[index, col] = value
+
+                # Jeśli to oryginalne dane (self.df), przypisz do current_result_df
+                if self.current_result_df is None:
+                    self.current_result_df = df.copy()
+
+                self._display_dataframe(self.current_result_df if self.current_result_df is not None else df)
+                self.save_btn.config(state="normal")
+                dialog.destroy()
+                messagebox.showinfo("Sukces", "Wiersz zaktualizowany.")
+            except Exception as e:
+                messagebox.showerror("Błąd", f"Nieprawidłowa wartość: {str(e)}")
+
+        ttk.Button(dialog, text="Zapisz", command=save).pack(pady=10)
+        ttk.Button(dialog, text="Anuluj", command=dialog.destroy).pack()
 
     def _build_remove_missing_tab(self, parent):
         """Panel do usuwania brakujących wartości"""
