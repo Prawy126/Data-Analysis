@@ -29,7 +29,7 @@ class MainApp(tk.Tk):
         self.title("Data Toolkit")
         self.geometry("1000x600")
         #self.minsize(820, 480)
-        self.state('zoomed')
+        #self.state('zoomed')
 
         # Zmienne aplikacji
         self.current_result_df: pd.DataFrame | None = None
@@ -1359,7 +1359,7 @@ class MainApp(tk.Tk):
         self.nb.add(classification_tab, text="Klasyfikacja")
 
         # Dodaj loader CSV do zakładki klasyfikacji
-        self._add_loader(classification_tab, on_success=lambda df: self._update_all_columns(df))
+        #self._add_loader(classification_tab, on_success=lambda df: self._update_all_columns(df))
 
         # Buduj resztę interfejsu klasyfikacji
         self._build_classification_tab(classification_tab)
@@ -1369,7 +1369,7 @@ class MainApp(tk.Tk):
         self.nb.add(clustering_tab, text="Klasteryzacja")
 
         # Dodaj loader CSV do zakładki klasteryzacji
-        self._add_loader(clustering_tab, on_success=lambda df: self._update_all_columns(df))
+        #self._add_loader(clustering_tab, on_success=lambda df: self._update_all_columns(df))
 
         # Buduj resztę interfejsu klasteryzacji
         self._build_clustering_tab(clustering_tab)
