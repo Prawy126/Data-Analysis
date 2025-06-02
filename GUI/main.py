@@ -549,7 +549,7 @@ class MainApp(tk.Tk):
                 self.save_btn.config(state="normal")
                 messagebox.showinfo(
                     "Sukces",
-                    f"Usunięto {result['liczba_duplikatow']} duplikatów!\n"
+                    f"Znaleziono {result['liczba_duplikatow']} duplikatów!\n"
                     f"Nowa liczba wierszy: {len(self.current_result_df)}"
                 )
             else:
