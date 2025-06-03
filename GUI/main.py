@@ -187,8 +187,6 @@ class MainApp(tk.Tk):
             messagebox.showinfo("OK", "Plik wczytany pomyślnie!")
             self._set_ready()
 
-        ttk.Button(frm, text="Wczytaj plik CSV", command=choose).pack(anchor="w")
-
 
     # ─────────────────────────────────────────────
     #  Paginacja wyników
