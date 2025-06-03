@@ -94,8 +94,27 @@ class MainApp(tk.Tk):
     def _select_all(self, listbox: tk.Listbox):
         listbox.selection_set(0, tk.END)
 
+    def _add_refresh_button(self, parent: tk.Widget) -> None:
+        """Dodaje tylko przycisk 'Odśwież' do podanego kontenera."""
+        frm = ttk.Frame(parent)
+        frm.pack(fill="x", padx=10, pady=(5, 12))
+
+        ttk.Button(frm, text="Odśwież", command=self._refresh_dataframe).pack(side="left", padx=5)
+
     def _clear_selection(self, listbox: tk.Listbox):
         listbox.selection_clear(0, tk.END)
+
+    def _refresh_dataframe(self):
+        """Odświeża aktualny widok DataFrame w zakładce Cleaning"""
+        if self.current_result_df is not None:
+            # Użyj wyniku przetwarzania, jeśli dostępny
+            self._display_dataframe(self.current_result_df)
+        elif self.df is not None:
+            # Jeśli brak wyniku przetwarzania, użyj oryginalnych danych
+            self._display_dataframe(self.df)
+        else:
+            # Brak danych całkowicie
+            messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
 
     def _load_csv_from_menu(self):
         """Metoda wywoływana przez Plik → Wczytaj CSV"""
@@ -154,30 +173,22 @@ class MainApp(tk.Tk):
             )
             if not fp:
                 return
-
             self._set_busy("Wczytywanie pliku…")
             df = wczytaj_csv(fp, separator=None, wyswietlaj_informacje=True)
             if df is None:
                 self._set_ready()
                 messagebox.showerror("Błąd", "Nie udało się wczytać pliku.")
                 return
-
             self.df, self.path = df, fp
             self.file_info_var.set(f"Wczytano: {fp.split('/')[-1]} ({len(df)}×{len(df.columns)})")
-
-            # Ustaw current_result_df na oryginalne dane, jeśli jeszcze nie ustawione
-            if self.current_result_df is None:
-                self.current_result_df = df.copy()
-
-            self._update_all_columns(df)
-
+            self.current_result_df = df.copy()
             if on_success:
                 on_success(df)
-
             messagebox.showinfo("OK", "Plik wczytany pomyślnie!")
             self._set_ready()
 
         ttk.Button(frm, text="Wczytaj plik CSV", command=choose).pack(anchor="w")
+
 
     # ─────────────────────────────────────────────
     #  Paginacja wyników
@@ -380,6 +391,8 @@ class MainApp(tk.Tk):
         self._clear_tabs()
         tab = ttk.Frame(self.nb)
         self.nb.add(tab, text="Cleaning")
+
+        self._add_refresh_button(tab)
 
         # Kontenery z podzakładkami (Ekstrakcja / Duplikaty / Braki / Kodowanie / Skalowanie / Zamiana wartości)
         notebook = ttk.Notebook(tab)
