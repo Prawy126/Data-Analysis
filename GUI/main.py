@@ -919,13 +919,11 @@ class MainApp(tk.Tk):
         if self.df is None:
             messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
             return
-
         selected_cols = [self.encoding_listbox.get(i)
                          for i in self.encoding_listbox.curselection()]
         if not selected_cols:
             messagebox.showerror("Błąd", "Proszę wybrać przynajmniej jedną kolumnę")
             return
-
         method = self.encoding_method.get()
         self._set_busy("Kodowanie kategorii…")
         try:
@@ -934,10 +932,12 @@ class MainApp(tk.Tk):
                     self.df, kolumny=selected_cols,
                     usun_pierwsza=self.oh_drop_first.get(), wyswietl_informacje=True
                 )
+                self.current_result_df = result['df_zakodowany']
             elif method == "binary":
                 result = binarne_kodowanie(
                     self.df, kolumny=selected_cols, wyswietlaj_informacje=True
                 )
+                self.current_result_df = result['df_zakodowany']
             else:  # target
                 target_col = self.target_combobox.get()
                 if not target_col:
@@ -946,11 +946,11 @@ class MainApp(tk.Tk):
                     self.df, kolumny=selected_cols, target=target_col,
                     wyswietlaj_informacje=True
                 )
-
-            if result and 'df_encoded' in result:
                 self.current_result_df = result['df_encoded']
-                self._display_dataframe(self.current_result_df)
-                messagebox.showinfo("Sukces", "Pomyślnie zastosowano kodowanie!")
+
+            self._display_dataframe(self.current_result_df)
+            messagebox.showinfo("Sukces", "Pomyślnie zastosowano kodowanie!")
+
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
         finally:
