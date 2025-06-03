@@ -28,32 +28,22 @@ class MainApp(tk.Tk):
         # Konfiguracja okna
         self.title("Data Toolkit")
         self.geometry("1000x600")
-        #self.minsize(820, 480)
-        #self.state('zoomed')
 
         # Zmienne aplikacji
         self.current_result_df: pd.DataFrame | None = None
         self.df: pd.DataFrame | None = None
         self.path: str | None = None
 
-        # Nowa zmienna dla informacji o pliku
+        # Informacje o pliku
         self.file_info_var = tk.StringVar(value="Brak wczytanego pliku")
-
-        # Dedykowana etykieta dla informacji o pliku (nad Notebook)
         self.file_info_label = ttk.Label(self, textvariable=self.file_info_var, font=("Helvetica", 10))
         self.file_info_label.pack(anchor="w", padx=10, pady=(5, 0))
-
-        # Zmienne kontrolne wykresów / AI
-        self.regline_var = tk.BooleanVar()
-        self.sort_values_var = tk.BooleanVar()
-        self.selected_features = []
-        self.target_var = tk.StringVar()
-        self._chart_vars = {}
-        self._replacement_rules = {}
 
         # Pasek menu
         self.menubar = tk.Menu(self)
         self.config(menu=self.menubar)
+
+        # Menu "Akcje"
         akcje_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Akcje", menu=akcje_menu)
         akcje_menu.add_command(label="Pre-processing", command=self._load_pre)
@@ -61,6 +51,11 @@ class MainApp(tk.Tk):
         akcje_menu.add_command(label="AI", command=self._build_ai_window)
         akcje_menu.add_separator()
         akcje_menu.add_command(label="Zamknij", command=self.quit)
+
+        # Nowe menu "Opcje"
+        plik_menu = tk.Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Plik", menu=plik_menu)
+        plik_menu.add_command(label="Zapisz wynik", command=self._save_result)
 
         # Notebook (główne zakładki)
         self.nb = ttk.Notebook(self)
@@ -72,7 +67,7 @@ class MainApp(tk.Tk):
                                     relief="sunken", anchor="w", padding=(6, 2))
         self.status_bar.pack(side="bottom", fill="x")
 
-        # POD SYSTEMEM STATUSU …
+        # Paginacja
         self.page_size = 100  # domyślny rozmiar strony
         self.current_page = 0  # numer strony (0-indeks)
         self._pagination_df_id = None  # identyfikacja DataFrame dla paginacji
@@ -95,6 +90,12 @@ class MainApp(tk.Tk):
         self._display_dataframe(df)
         self.save_btn.config(state="normal")
 
+    def _select_all(self, listbox: tk.Listbox):
+        listbox.selection_set(0, tk.END)
+
+    def _clear_selection(self, listbox: tk.Listbox):
+        listbox.selection_clear(0, tk.END)
+
     # ─────────────────────────────────────────────
     #  Helpers wizualizacji
     # ─────────────────────────────────────────────
@@ -110,11 +111,7 @@ class MainApp(tk.Tk):
     #  Wspólne: loader CSV + pomoc
     # ──────────────────────────────────────────────────────────────
     def _add_loader(self, parent: tk.Widget, on_success=None) -> None:
-        """
-        Przycisk "Wczytaj plik CSV" + zarządzanie pulsującym paskiem stanu.
-        Po wczytaniu CSV **zawsze** wywołujemy self._update_all_columns(df),
-        a następnie, jeśli przekazano dodatkowy on_success, wywołujemy go.
-        """
+        """Przycisk 'Wczytaj plik CSV' + zarządzanie pulsującym paskiem stanu."""
         frm = ttk.Frame(parent)
         frm.pack(fill="x", padx=10, pady=(5, 12))
 
@@ -126,25 +123,24 @@ class MainApp(tk.Tk):
             if not fp:
                 return
 
-            # Ustawiamy stan „zajęty” w pasku statusu
             self._set_busy("Wczytywanie pliku…")
-
-            # Próba wczytania
             df = wczytaj_csv(fp, separator=None, wyswietlaj_informacje=True)
             if df is None:
                 self._set_ready()
                 messagebox.showerror("Błąd", "Nie udało się wczytać pliku.")
                 return
 
-            # ------------ zapisujemy globalnie ------------
             self.df, self.path = df, fp
             self.file_info_var.set(f"Wczytano: {fp.split('/')[-1]} ({len(df)}×{len(df.columns)})")
 
-            # ------------ GLOBALNY REFRESH (najpierw!) ------------
+            # Ustaw current_result_df na oryginalne dane, jeśli jeszcze nie ustawione
+            if self.current_result_df is None:
+                self.current_result_df = df.copy()
+                self.save_btn.config(state="normal")  # Aktywuj przycisk
+
             self._update_all_columns(df)
 
-            # ------------ opcjonalny CALLBACK lokalny – jeśli jest inny od _update_all_columns ------------
-            if on_success is not None and on_success is not self._update_all_columns:
+            if on_success:
                 on_success(df)
 
             messagebox.showinfo("OK", "Plik wczytany pomyślnie!")
@@ -493,47 +489,51 @@ class MainApp(tk.Tk):
 
     def _save_result(self) -> None:
         """Zapis wyniku do CSV"""
-        if self.current_result_df is None:
-            messagebox.showwarning("Brak danych", "Brak wyników do zapisania!")
+        if self.df is None:
+            messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
             return
+
+        # Jeśli nie ma wyników przetwarzania, zapisz oryginalne dane
+        df_to_save = self.current_result_df if self.current_result_df is not None else self.df
 
         file_path = filedialog.asksaveasfilename(
             defaultextension=".csv",
             filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
         )
-
         if file_path:
             try:
-                self.current_result_df.to_csv(file_path, index=False)
-                messagebox.showinfo("Sukces", f"Dane zapisano w:\n{file_path}")
+                df_to_save.to_csv(file_path, index=False)
+                messagebox.showinfo("Sukces", f"Dane zapisano w: {file_path}")
             except Exception as e:
-                messagebox.showerror("Błąd", f"Błąd podczas zapisu:\n{str(e)}")
+                messagebox.showerror("Błąd", f"Błąd podczas zapisu: {str(e)}")
 
     def _build_duplicates_tab(self, parent):
-        """Zakładka do usuwania duplikatów"""
         control_frame = ttk.Frame(parent)
         control_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        # Lista kolumn
         ttk.Label(control_frame, text="Kolumny do sprawdzania:").pack(anchor="w")
         self.duplicates_listbox = tk.Listbox(control_frame, selectmode="multiple", height=6, exportselection=False)
         self.duplicates_listbox.pack(fill="x", padx=5, pady=5)
+
+        # Nowe przyciski
+        btn_frame = ttk.Frame(control_frame)
+        btn_frame.pack(fill="x", pady=5)
+        ttk.Button(btn_frame, text="Wybierz wszystkie", command=lambda: self._select_all(self.duplicates_listbox)).pack(
+            side="left", padx=5)
+        ttk.Button(btn_frame, text="Czyść zaznaczenie",
+                   command=lambda: self._clear_selection(self.duplicates_listbox)).pack(side="left", padx=5)
 
         # Tryb usuwania
         self.duplicates_mode = tk.StringVar(value="pierwszy")
         mode_frame = ttk.Frame(control_frame)
         mode_frame.pack(fill="x", pady=5)
-
         ttk.Radiobutton(mode_frame, text="Zachowaj pierwszy", variable=self.duplicates_mode, value="pierwszy").pack(
             side="left")
         ttk.Radiobutton(mode_frame, text="Zachowaj ostatni", variable=self.duplicates_mode, value="ostatni").pack(
             side="left")
         ttk.Radiobutton(mode_frame, text="Usuń wszystkie", variable=self.duplicates_mode, value="wszystkie").pack(
             side="left")
-
-        # Przycisk wykonania
-        ttk.Button(control_frame, text="Usuń duplikaty", command=self._run_duplicate_removal) \
-            .pack(side="right", padx=5, pady=5)
+        ttk.Button(control_frame, text="Usuń duplikaty", command=self._run_duplicate_removal).pack(side="right", padx=5,
+                                                                                                   pady=5)
 
     def _run_duplicate_removal(self) -> None:
         if self.df is None:
@@ -588,6 +588,13 @@ class MainApp(tk.Tk):
         ttk.Label(control_frame, text="Wybierz kolumny:").pack(anchor="w")
         self.missing_listbox = tk.Listbox(control_frame, selectmode="multiple", height=5, exportselection=False)
         self.missing_listbox.pack(fill="x", padx=5, pady=5)
+
+        btn_frame = ttk.Frame(control_frame)
+        btn_frame.pack(fill="x", pady=5)
+        ttk.Button(btn_frame, text="Wybierz wszystkie", command=lambda: self._select_all(self.missing_listbox)).pack(
+            side="left", padx=5)
+        ttk.Button(btn_frame, text="Czyść zaznaczenie",
+                   command=lambda: self._clear_selection(self.missing_listbox)).pack(side="left", padx=5)
 
         # Metoda wypełnienia
         self.fill_method = tk.StringVar(value="srednia")
@@ -649,17 +656,47 @@ class MainApp(tk.Tk):
         dialog.transient(self)
         dialog.grab_set()
 
+        # Główny kontener z Canvas i Scrollbar
+        main_frame = ttk.Frame(dialog)
+        main_frame.pack(fill="both", expand=True)
+
+        # Canvas z Scrollbar
+        canvas = tk.Canvas(main_frame)
+        scrollbar = ttk.Scrollbar(main_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Ustawienie kolumny dla Canvas (0) i Scrollbara (1)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        # Konfiguracja siatki dla main_frame
+        main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_rowconfigure(0, weight=1)
+
+        # Wypełnianie scrollable_frame polami edycyjnymi
         row_data = df.iloc[index]
         entries = {}
 
         for col in df.columns:
-            frame = ttk.Frame(dialog)
+            frame = ttk.Frame(scrollable_frame)
             frame.pack(fill="x", padx=10, pady=2)
             ttk.Label(frame, text=col).pack(anchor="w")
             entry = ttk.Entry(frame)
             entry.insert(0, str(row_data[col]))
             entry.pack(fill="x")
             entries[col] = entry
+
+        # Ramka dla przycisków (poza obszarem przewijania)
+        button_frame = ttk.Frame(dialog)
+        button_frame.pack(fill="x", padx=10, pady=10)
 
         def save():
             try:
@@ -674,7 +711,6 @@ class MainApp(tk.Tk):
                     else:
                         df.at[index, col] = value
 
-                # Jeśli to oryginalne dane (self.df), przypisz do current_result_df
                 if self.current_result_df is None:
                     self.current_result_df = df.copy()
 
@@ -685,8 +721,9 @@ class MainApp(tk.Tk):
             except Exception as e:
                 messagebox.showerror("Błąd", f"Nieprawidłowa wartość: {str(e)}")
 
-        ttk.Button(dialog, text="Zapisz", command=save).pack(pady=10)
-        ttk.Button(dialog, text="Anuluj", command=dialog.destroy).pack()
+        # Przyciski zawsze widoczne w dolnej części okna
+        ttk.Button(button_frame, text="Zapisz", command=save).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="Anuluj", command=dialog.destroy).pack(side="left", padx=5)
 
     def _build_remove_missing_tab(self, parent):
         """Panel do usuwania brakujących wartości"""
@@ -824,6 +861,13 @@ class MainApp(tk.Tk):
         self.encoding_listbox = tk.Listbox(control_frame, selectmode="multiple", height=5, exportselection=False)
         self.encoding_listbox.pack(fill="x", padx=5, pady=5)
 
+        btn_frame = ttk.Frame(control_frame)
+        btn_frame.pack(fill="x", pady=5)
+        ttk.Button(btn_frame, text="Wybierz wszystkie", command=lambda: self._select_all(self.encoding_listbox)).pack(
+            side="left", padx=5)
+        ttk.Button(btn_frame, text="Czyść zaznaczenie",
+                   command=lambda: self._clear_selection(self.encoding_listbox)).pack(side="left", padx=5)
+
         # Dodatkowe opcje dla poszczególnych metod
         self.encoding_options_frame = ttk.Frame(control_frame)
         self.encoding_options_frame.pack(fill="x", pady=5)
@@ -903,6 +947,13 @@ class MainApp(tk.Tk):
         ttk.Label(control_frame, text="Kolumny do skalowania:").pack(anchor="w", pady=(10, 0))
         self.scaling_listbox = tk.Listbox(control_frame, selectmode="multiple", height=5, exportselection=False)
         self.scaling_listbox.pack(fill="x", padx=5, pady=5)
+
+        btn_frame = ttk.Frame(control_frame)
+        btn_frame.pack(fill="x", pady=5)
+        ttk.Button(btn_frame, text="Wybierz wszystkie", command=lambda: self._select_all(self.scaling_listbox)).pack(
+            side="left", padx=5)
+        ttk.Button(btn_frame, text="Czyść zaznaczenie",
+                   command=lambda: self._clear_selection(self.scaling_listbox)).pack(side="left", padx=5)
 
         # Przycisk wykonania
         ttk.Button(control_frame, text="Zastosuj skalowanie", command=self._run_scaling).pack(side="right", padx=5,
@@ -1475,6 +1526,13 @@ class MainApp(tk.Tk):
         self.feature_listbox.pack(fill="x", padx=5, pady=5)
         self.feature_listbox.bind("<<ListboxSelect>>", self._check_classif_ready)
 
+        btn_frame = ttk.Frame(control)
+        btn_frame.pack(fill="x", pady=5)
+        ttk.Button(btn_frame, text="Wybierz wszystkie", command=lambda: self._select_all(self.feature_listbox)).pack(
+            side="left", padx=5)
+        ttk.Button(btn_frame, text="Czyść zaznaczenie",
+                   command=lambda: self._clear_selection(self.feature_listbox)).pack(side="left", padx=5)
+
         ttk.Label(control, text="Kolumna docelowa:").pack(anchor="w")
         self.target_combobox = ttk.Combobox(control, state="readonly")
         self.target_combobox.pack(fill="x", padx=5, pady=5)
@@ -1578,6 +1636,13 @@ class MainApp(tk.Tk):
 
         self.clustering_listbox = tk.Listbox(control_frame, selectmode="multiple", height=7, exportselection=False)
         self.clustering_listbox.pack(fill="x", padx=5, pady=5)
+
+        btn_frame = ttk.Frame(control_frame)
+        btn_frame.pack(fill="x", pady=5)
+        ttk.Button(btn_frame, text="Wybierz wszystkie", command=lambda: self._select_all(self.clustering_listbox)).pack(
+            side="left", padx=5)
+        ttk.Button(btn_frame, text="Czyść zaznaczenie",
+                   command=lambda: self._clear_selection(self.clustering_listbox)).pack(side="left", padx=5)
 
         param_frame = ttk.Frame(control_frame);
         param_frame.pack(fill="x", pady=5)
