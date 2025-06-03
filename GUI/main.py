@@ -55,7 +55,9 @@ class MainApp(tk.Tk):
         # Nowe menu "Opcje"
         plik_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Plik", menu=plik_menu)
+        plik_menu.add_command(label="Wczytaj CSV", command=self._load_csv_from_menu)
         plik_menu.add_command(label="Zapisz wynik", command=self._save_result)
+
 
         # Notebook (główne zakładki)
         self.nb = ttk.Notebook(self)
@@ -88,13 +90,43 @@ class MainApp(tk.Tk):
     def _on_file_loaded(self, df):
         self._update_all_columns(df)
         self._display_dataframe(df)
-        self.save_btn.config(state="normal")
 
     def _select_all(self, listbox: tk.Listbox):
         listbox.selection_set(0, tk.END)
 
     def _clear_selection(self, listbox: tk.Listbox):
         listbox.selection_clear(0, tk.END)
+
+    def _load_csv_from_menu(self):
+        """Metoda wywoływana przez Plik → Wczytaj CSV"""
+        fp = filedialog.askopenfilename(
+            title="Wybierz plik CSV",
+            filetypes=[("CSV", "*.csv"), ("Wszystkie", "*.*")]
+        )
+        if not fp:
+            return
+
+        self._set_busy("Wczytywanie pliku…")
+        df = wczytaj_csv(fp, separator=None, wyswietlaj_informacje=True)
+        if df is None:
+            self._set_ready()
+            messagebox.showerror("Błąd", "Nie udało się wczytać pliku.")
+            return
+
+        self.df, self.path = df, fp
+        self.file_info_var.set(f"Wczytano: {fp.split('/')[-1]} ({len(df)}×{len(df.columns)})")
+        # Ustaw current_result_df na oryginalne dane
+        self.current_result_df = df.copy()
+
+        # Odśwież wszystkie sekcje GUI po wczytaniu danych
+        self._update_all_columns(df)
+
+        # Jeśli jesteśmy na zakładce Cleaning, wyświetl dane
+        if hasattr(self, 'result_tree'):
+            self._display_dataframe(df)
+
+        messagebox.showinfo("OK", "Plik wczytany pomyślnie!")
+        self._set_ready()
 
     # ─────────────────────────────────────────────
     #  Helpers wizualizacji
@@ -136,7 +168,6 @@ class MainApp(tk.Tk):
             # Ustaw current_result_df na oryginalne dane, jeśli jeszcze nie ustawione
             if self.current_result_df is None:
                 self.current_result_df = df.copy()
-                self.save_btn.config(state="normal")  # Aktywuj przycisk
 
             self._update_all_columns(df)
 
@@ -350,9 +381,6 @@ class MainApp(tk.Tk):
         tab = ttk.Frame(self.nb)
         self.nb.add(tab, text="Cleaning")
 
-        # ===================== nowa definicja loadera =====================
-        self._add_loader(tab, on_success=self._on_file_loaded)
-
         # Kontenery z podzakładkami (Ekstrakcja / Duplikaty / Braki / Kodowanie / Skalowanie / Zamiana wartości)
         notebook = ttk.Notebook(tab)
         notebook.pack(fill='both', expand=True, padx=10, pady=10)
@@ -385,10 +413,6 @@ class MainApp(tk.Tk):
         self.result_tree, ybar, xbar = self._make_treeview(tab, [])
         self.result_tree.pack(fill="both", expand=True, padx=10, pady=10)
         self._setup_pagination_controls(tab)
-
-        # Przycisk „Zapisz wynik”
-        self.save_btn = ttk.Button(tab, text="Zapisz wynik", state="disabled", command=self._save_result)
-        self.save_btn.pack(side="right", padx=10, pady=0)
 
     def _build_extraction_tab(self, parent):
         """Zakładka do ekstrakcji podtablicy"""
@@ -442,7 +466,6 @@ class MainApp(tk.Tk):
             if result is not None:
                 self.current_result_df = result
                 self._display_dataframe(result)
-                self.save_btn.config(state="normal")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
         finally:
@@ -551,7 +574,6 @@ class MainApp(tk.Tk):
             if result['liczba_duplikatow'] > 0:
                 self.current_result_df = result['df_cleaned']
                 self._display_dataframe(self.current_result_df)
-                self.save_btn.config(state="normal")
                 messagebox.showinfo(
                     "Sukces",
                     f"Znaleziono {result['liczba_duplikatow']} duplikatów!\n"
@@ -715,7 +737,6 @@ class MainApp(tk.Tk):
                     self.current_result_df = df.copy()
 
                 self._display_dataframe(self.current_result_df if self.current_result_df is not None else df)
-                self.save_btn.config(state="normal")
                 dialog.destroy()
                 messagebox.showinfo("Sukces", "Wiersz zaktualizowany.")
             except Exception as e:
@@ -751,7 +772,6 @@ class MainApp(tk.Tk):
     def _clear_preprocessing_data(self, df: pd.DataFrame) -> None:
         """Resetuje stan po wczytaniu nowego pliku"""
         self.current_result_df = None
-        self.save_btn.config(state="disabled")
         self.result_tree.delete(*self.result_tree.get_children())
 
         # Aktualizacja list kolumn
@@ -812,7 +832,6 @@ class MainApp(tk.Tk):
             )
             self.current_result_df = result
             self._display_dataframe(result)
-            self.save_btn.config(state="normal")
             messagebox.showinfo("Sukces", "Pomyślnie wypełniono brakujące wartości!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
@@ -834,7 +853,6 @@ class MainApp(tk.Tk):
             )
             self.current_result_df = result
             self._display_dataframe(result)
-            self.save_btn.config(state="normal")
             messagebox.showinfo("Sukces", "Pomyślnie usunięto brakujące wartości!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
@@ -921,7 +939,6 @@ class MainApp(tk.Tk):
             if result and 'df_encoded' in result:
                 self.current_result_df = result['df_encoded']
                 self._display_dataframe(self.current_result_df)
-                self.save_btn.config(state="normal")
                 messagebox.showinfo("Sukces", "Pomyślnie zastosowano kodowanie!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
@@ -985,7 +1002,6 @@ class MainApp(tk.Tk):
                 )
             self.current_result_df = result
             self._display_dataframe(result)
-            self.save_btn.config(state="normal")
             messagebox.showinfo("Sukces", "Pomyślnie zastosowano skalowanie!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
@@ -1116,7 +1132,6 @@ class MainApp(tk.Tk):
             )
             self.current_result_df = result
             self._display_dataframe(result)
-            self.save_btn.config(state="normal")
             messagebox.showinfo("Sukces", "Pomyślnie zastosowano zmiany!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
