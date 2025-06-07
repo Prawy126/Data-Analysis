@@ -438,10 +438,9 @@ class MainApp(tk.Tk):
                 self.df, rows=rows, cols=cols,
                 mode=self.mode_var.get(), wyswietlaj_informacje=True
             )
-            if result is not None:
-                self.current_result_df = result
-                self._display_dataframe(result)
-                self.save_btn.config(state="normal")
+            # <---  tu commit  --->
+            self._commit_df(result)
+            messagebox.showinfo("OK", "Ekstrakcja zakończona!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
         finally:
@@ -543,14 +542,13 @@ class MainApp(tk.Tk):
                 self.df, kolumny=selected_cols or None,
                 tryb=self.duplicates_mode.get(), wyswietlaj_info=True
             )
+
             if result['liczba_duplikatow'] > 0:
-                self.current_result_df = result['df_cleaned']
-                self._display_dataframe(self.current_result_df)
-                self.save_btn.config(state="normal")
+                # <---  commit  --->
+                self._commit_df(result, dict_key='df_cleaned')
                 messagebox.showinfo(
                     "Sukces",
-                    f"Usunięto {result['liczba_duplikatow']} duplikatów!\n"
-                    f"Nowa liczba wierszy: {len(self.current_result_df)}"
+                    f"Usunięto {result['liczba_duplikatow']} duplikatów!"
                 )
             else:
                 messagebox.showinfo("Informacja", "Nie znaleziono duplikatów do usunięcia")
@@ -693,10 +691,9 @@ class MainApp(tk.Tk):
                 self.df, metoda=method, wartosc_stala=const_val,
                 reguly=reguly, wyswietlaj_info=True
             )
-            self.current_result_df = result
-            self._display_dataframe(result)
-            self.save_btn.config(state="normal")
-            messagebox.showinfo("Sukces", "Pomyślnie wypełniono brakujące wartości!")
+            # <---  commit  --->
+            self._commit_df(result)
+            messagebox.showinfo("Sukces", "Braki wypełnione!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
         finally:
@@ -715,10 +712,9 @@ class MainApp(tk.Tk):
                 liczba_min_niepustych=int(self.min_non_missing.get()),
                 wyswietlaj_info=True
             )
-            self.current_result_df = result
-            self._display_dataframe(result)
-            self.save_btn.config(state="normal")
-            messagebox.showinfo("Sukces", "Pomyślnie usunięto brakujące wartości!")
+            # <---  commit  --->
+            self._commit_df(result)
+            messagebox.showinfo("Sukces", "Brakujące wiersze/kolumny usunięte!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
         finally:
@@ -770,7 +766,7 @@ class MainApp(tk.Tk):
         selected_cols = [self.encoding_listbox.get(i)
                          for i in self.encoding_listbox.curselection()]
         if not selected_cols:
-            messagebox.showerror("Błąd", "Proszę wybrać przynajmniej jedną kolumnę")
+            messagebox.showerror("Błąd", "Proszę wybrać kolumny do kodowania")
             return
 
         method = self.encoding_method.get()
@@ -794,11 +790,9 @@ class MainApp(tk.Tk):
                     wyswietlaj_informacje=True
                 )
 
-            if result and 'df_zakodowany' in result:
-                self.current_result_df = result['df_zakodowany']
-                self._display_dataframe(self.current_result_df)
-                self.save_btn.config(state="normal")
-                messagebox.showinfo("Sukces", "Pomyślnie zastosowano kodowanie!")
+            # <---  commit  --->
+            self._commit_df(result, dict_key='df_zakodowany')
+            messagebox.showinfo("Sukces", "Kodowanie zakończone!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
         finally:
@@ -852,10 +846,10 @@ class MainApp(tk.Tk):
                     self.df, kolumny=selected_cols,
                     wyswietlaj_informacje=True, zwroc_tylko_dane=True
                 )
-            self.current_result_df = result
-            self._display_dataframe(result)
-            self.save_btn.config(state="normal")
-            messagebox.showinfo("Sukces", "Pomyślnie zastosowano skalowanie!")
+
+            # <---  commit  --->
+            self._commit_df(result)
+            messagebox.showinfo("Sukces", "Skalowanie zakończone!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
         finally:
@@ -983,16 +977,13 @@ class MainApp(tk.Tk):
                 self.df, reguly=self._replacement_rules,
                 wyswietlaj_informacje=True
             )
-            self.current_result_df = result
-            self._display_dataframe(result)
-            self.save_btn.config(state="normal")
-            messagebox.showinfo("Sukces", "Pomyślnie zastosowano zmiany!")
+            # <---  commit  --->
+            self._commit_df(result)
+            messagebox.showinfo("Sukces", "Wartości zamienione!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
         finally:
             self._set_ready()
-
-
 
     # ──────────────────────────────────────────────────────────────
     #  STATYSTYKA
@@ -1569,6 +1560,51 @@ class MainApp(tk.Tk):
     def on_close(self):
         self.destroy()
         plt.close('all')  # zamyka wszystkie figury matplotlib
+
+    # ─────────────────────────────────────────────
+    #  Commit: zapisujemy zmiany jako główny DataFrame
+    # ─────────────────────────────────────────────
+    def _commit_df(self, result, *, dict_key: str | None = None) -> None:
+        """
+        Przyjmuje:
+            •  result  – DataFrame **lub** słownik zawierający DataFrame,
+            •  dict_key – jeśli wynik jest słownikiem, klucz pod którym
+                          spodziewamy się DataFrame’u (np. 'df_cleaned').
+        Aktualizuje:
+            •  self.df i self.current_result_df,
+            •  wszystkie listy/comboboxy przez _update_all_columns,
+            •  tabelę z wynikami i przyciski nawigacji.
+        """
+        if result is None:
+            return
+
+        # 1) wyciągnij DataFrame z wyniku
+        if isinstance(result, pd.DataFrame):
+            new_df = result
+
+        elif isinstance(result, dict):
+            # jeżeli nie podano klucza, spróbuj odgadnąć
+            if dict_key is None:
+                for k in ("df_cleaned", "df_zakodowany", "df", "df_scaled"):
+                    if k in result:
+                        dict_key = k
+                        break
+            if dict_key is None or dict_key not in result:
+                raise ValueError("Nie znaleziono DataFrame’u w wyniku funkcji.")
+            new_df = result[dict_key]
+
+        else:
+            raise TypeError("Nieznany typ wyniku operacji.")
+
+        # 2) zapisz jako główny DataFrame aplikacji
+        self.df = new_df
+        self.current_result_df = new_df
+
+        # 3) odśwież interfejs
+        self._update_all_columns(new_df)       # listy kolumn, comboboxy, itp.
+        self._display_dataframe(new_df)        # widok w tabeli
+        self.save_btn.config(state="normal")   # można zapisać
+
 
 if __name__ == "__main__":
     app = MainApp()
