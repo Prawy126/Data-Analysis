@@ -107,20 +107,17 @@ def wydobadz_wartosci_numeryczne(df: pd.DataFrame, wybrane_kolumny: Optional[Lis
     return wartosci_numeryczne
 
 
-def analizuj_dane_numeryczne(sciezka_pliku: str,
-                             separator: Union[str, List[str]] = None,
-                             wybrane_kolumny: Optional[List[str]] = None) -> Tuple[
-    Dict[str, np.ndarray], Dict[str, Dict[str, float]]]:
+def analizuj_dane_numeryczne(
+        df: pd.DataFrame,
+        wybrane_kolumny: Optional[List[str]] = None
+) -> Tuple[Dict[str, np.ndarray], Dict[str, Dict[str, float]]]:
     """
-    Wczytuje dane z pliku CSV, wyodrębnia wartości numeryczne i oblicza podstawowe statystyki.
+    Wyodrębnia wartości numeryczne z DataFrame i oblicza podstawowe statystyki.
 
     Parametry:
     ---------
-    sciezka_pliku : str
-        Ścieżka do pliku CSV
-    separator : Union[str, List[str]], opcjonalnie
-        Separator kolumn (jeśli None, zostanie wykryty automatycznie)
-        Może być pojedynczym separatorem lub listą separatorów do wyboru
+    df : pd.DataFrame
+        DataFrame zawierający dane do analizy
     wybrane_kolumny : Optional[List[str]], opcjonalnie
         Lista kolumn do analizy. Jeśli None, analizuje wszystkie kolumny numeryczne.
 
@@ -131,13 +128,10 @@ def analizuj_dane_numeryczne(sciezka_pliku: str,
         - Słownik z wartościami numerycznymi dla każdej kolumny
         - Słownik ze statystykami dla każdej kolumny
     """
-    print(f"\n[INFO] Rozpoczynam analizę danych numerycznych z pliku {os.path.basename(sciezka_pliku)}...")
+    print("\n[INFO] Rozpoczynam analizę danych numerycznych...")
 
-    # Wczytanie danych z wykorzystaniem istniejącej funkcji
-    df = wczytaj_csv(sciezka_pliku, separator=separator, wyswietlaj_informacje=True)
-
-    if df is None:
-        print("[BŁĄD] Nie udało się wczytać danych.")
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        print("[BŁĄD] Przekazano pusty DataFrame lub obiekt nie jest DataFrame.")
         return {}, {}
 
     # Znalezienie kolumn numerycznych
@@ -160,19 +154,17 @@ def analizuj_dane_numeryczne(sciezka_pliku: str,
     return wartosci_numeryczne, statystyki
 
 
-def analizuj_dane_numeryczne(sciezka_pliku: str,
-                             separator: str = None,
-                             wybrane_kolumny: Optional[List[str]] = None) -> Tuple[
-    Dict[str, np.ndarray], Dict[str, Dict[str, float]]]:
+def analizuj_dane_numeryczne(
+        df: pd.DataFrame,
+        wybrane_kolumny: Optional[List[str]] = None
+) -> Tuple[Dict[str, np.ndarray], Dict[str, Dict[str, float]]]:
     """
-    Wczytuje dane z pliku CSV, wyodrębnia wartości numeryczne i oblicza podstawowe statystyki.
+    Wyodrębnia wartości numeryczne z DataFrame i oblicza podstawowe statystyki.
 
     Parametry:
     ---------
-    sciezka_pliku : str
-        Ścieżka do pliku CSV
-    separator : str, opcjonalnie
-        Separator kolumn (jeśli None, zostanie wykryty automatycznie)
+    df : pd.DataFrame
+        DataFrame zawierający dane do analizy
     wybrane_kolumny : Optional[List[str]], opcjonalnie
         Lista kolumn do analizy. Jeśli None, analizuje wszystkie kolumny numeryczne.
 
@@ -183,13 +175,14 @@ def analizuj_dane_numeryczne(sciezka_pliku: str,
         - Słownik z wartościami numerycznymi dla każdej kolumny
         - Słownik ze statystykami dla każdej kolumny
     """
-    print(f"\n[INFO] Rozpoczynam analizę danych numerycznych z pliku {os.path.basename(sciezka_pliku)}...")
+    if 'sciezka_pliku' in df.attrs:
+        nazwa_pliku = os.path.basename(df.attrs['sciezka_pliku'])
+        print(f"\n[INFO] Rozpoczynam analizę danych numerycznych z pliku {nazwa_pliku}...")
+    else:
+        print("\n[INFO] Rozpoczynam analizę danych numerycznych...")
 
-    # Wczytanie danych z wykorzystaniem istniejącej funkcji
-    df = wczytaj_csv(sciezka_pliku, separator=separator, wyswietlaj_informacje=True)
-
-    if df is None:
-        print("[BŁĄD] Nie udało się wczytać danych.")
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        print("[BŁĄD] Przekazano pusty DataFrame lub obiekt nie jest DataFrame.")
         return {}, {}
 
     # Znalezienie kolumn numerycznych
