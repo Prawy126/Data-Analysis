@@ -30,15 +30,15 @@ class MainApp(tk.Tk):
         self.geometry("1000x600")
 
         # Zmienne aplikacji
-        self.current_result_df: pd.DataFrame | None = None
-        self.df: pd.DataFrame | None = None
-        self.path: str | None = None
+        self.current_result_df = None
+        self.df = None
+        self.path = None
+        self._replacement_rules = {}  # Dodane: inicjalizacja słownika reguł zamiany
 
         # Informacje o pliku
         self.file_info_var = tk.StringVar(value="Brak wczytanego pliku")
         self.file_info_label = ttk.Label(self, textvariable=self.file_info_var, font=("Helvetica", 10))
         self.file_info_label.pack(anchor="w", padx=10, pady=(5, 0))
-
         # Pasek menu
         self.menubar = tk.Menu(self)
         self.config(menu=self.menubar)
@@ -132,20 +132,68 @@ class MainApp(tk.Tk):
             messagebox.showerror("Błąd", "Nie udało się wczytać pliku.")
             return
 
-        self.df, self.path = df, fp
+        self.df = df
+        self.path = fp
         self.file_info_var.set(f"Wczytano: {fp.split('/')[-1]} ({len(df)}×{len(df.columns)})")
+
         # Ustaw current_result_df na oryginalne dane
         self.current_result_df = df.copy()
 
         # Odśwież wszystkie sekcje GUI po wczytaniu danych
         self._update_all_columns(df)
+        self._clear_preprocessing_data(df)  # Reset stanu przetwarzania
 
-        # Jeśli jesteśmy na zakładce Cleaning, wyświetl dane
+        # Aktualizuj widok danych w aktualnej zakładce
         if hasattr(self, 'result_tree'):
             self._display_dataframe(df)
 
         messagebox.showinfo("OK", "Plik wczytany pomyślnie!")
         self._set_ready()
+
+    def _commit_df(self, result, *, dict_key: str | None = None) -> None:
+        """
+        Przyjmuje:
+            •  result  – DataFrame **lub** słownik zawierający DataFrame,
+            •  dict_key – jeśli wynik jest słownikiem, klucz pod którym
+                        spodziewamy się DataFrame'u (np. 'df_cleaned').
+        Aktualizuje:
+            •  self.df i self.current_result_df,
+            •  wszystkie listy/comboboxy przez _update_all_columns,
+            •  tabelę z wynikami i przyciski nawigacji.
+        """
+        if result is None:
+            return
+
+        # 1) wyciągnij DataFrame z wyniku
+        if isinstance(result, pd.DataFrame):
+            new_df = result
+        elif isinstance(result, dict):
+            # jeżeli nie podano klucza, spróbuj odgadnąć
+            if dict_key is None:
+                for k in ("df_cleaned", "df_zakodowany", "df", "df_scaled"):
+                    if k in result:
+                        dict_key = k
+                        break
+            if dict_key is None or dict_key not in result:
+                raise ValueError("Nie znaleziono DataFrame'u w wyniku funkcji.")
+            new_df = result[dict_key]
+        else:
+            raise TypeError("Nieznany typ wyniku operacji.")
+
+        # 2) zapisz jako główny DataFrame aplikacji
+        self.df = new_df
+        self.current_result_df = new_df
+
+        # 3) odśwież interfejs we wszystkich zakładkach
+        self._update_all_columns(new_df)  # listy kolumn, comboboxy, itp.
+        self._clear_preprocessing_data(new_df)  # Reset stanu przetwarzania
+        self._display_dataframe(new_df)  # widok w tabeli
+
+        # 4) Aktualizuj również dane w zakładkach AI
+        if hasattr(self, 'classification_tree'):
+            self._show_page("cls", self.classification_tree)
+        if hasattr(self, 'clustering_tree'):
+            self._show_page("clu", self.clustering_tree)
 
     # ─────────────────────────────────────────────
     #  Helpers wizualizacji
@@ -338,31 +386,21 @@ class MainApp(tk.Tk):
 
     # W metodzie _update_all_columns dodajemy aktualizację dla wizualizacji:
     def _update_all_columns(self, df: pd.DataFrame) -> None:
-        """
-        Odśwież wszystkie comboboxy/listboxy w całym GUI po wczytaniu nowego DataFrame.
-        Musi być wywołane **zawsze** po wczytaniu CSV.
-        """
-        # 1) Zakładka PRE-PROCESSING: czyścimy stare dane i wypełniamy je nowymi
+        """Odśwież wszystkie comboboxy/listboxy w całym GUI po wczytaniu nowego DataFrame."""
+        # Preprocessing
         self._clear_preprocessing_data(df)
 
-        # 2) Zakładka WIZUALIZACJE
+        # Wizualizacje
         if hasattr(self, 'x_col'):
             self._update_visualization_columns(df)
 
-        # 3) Zakładka AI – klasyfikacja
+        # AI - klasyfikacja
         if hasattr(self, 'feature_listbox'):
-            self.feature_listbox.delete(0, tk.END)
-            for col in df.columns:
-                self.feature_listbox.insert(tk.END, col)
+            self._update_classification_columns(df)
 
-        if hasattr(self, 'target_combobox'):
-            self.target_combobox["values"] = df.columns.tolist()
-
-        # 4) Zakładka AI – klasteryzacja
+        # AI - klasteryzacja
         if hasattr(self, 'clustering_listbox'):
-            self.clustering_listbox.delete(0, tk.END)
-            for col in df.columns:
-                self.clustering_listbox.insert(tk.END, col)
+            self._update_clustering_columns(df)
 
     def _update_visualization_columns(self, df: pd.DataFrame) -> None:
         """Aktualizuje listy kolumn w zakładce wizualizacji"""
@@ -382,17 +420,14 @@ class MainApp(tk.Tk):
         self.hue_col.set("brak")
 
     def _load_pre(self) -> None:
-        """
-        Buduje zakładkę "Cleaning" – pre-processing.
-        Zamiast przekazywać dowolny on_success, zawsze podajemy on_success=self._update_all_columns.
-        """
+        """Buduje zakładkę "Cleaning" – pre-processing."""
         self._clear_tabs()
         tab = ttk.Frame(self.nb)
         self.nb.add(tab, text="Cleaning")
 
         self._add_refresh_button(tab)
 
-        # Kontenery z podzakładkami (Ekstrakcja / Duplikaty / Braki / Kodowanie / Skalowanie / Zamiana wartości)
+        # Kontenery z podzakładkami
         notebook = ttk.Notebook(tab)
         notebook.pack(fill='both', expand=True, padx=10, pady=10)
 
@@ -424,6 +459,11 @@ class MainApp(tk.Tk):
         self.result_tree, ybar, xbar = self._make_treeview(tab, [])
         self.result_tree.pack(fill="both", expand=True, padx=10, pady=10)
         self._setup_pagination_controls(tab)
+
+        # Odśwież dane jeśli są dostępne
+        if self.df is not None:
+            self._clear_preprocessing_data(self.df)
+            self._display_dataframe(self.df)
 
     def _build_extraction_tab(self, parent):
         """Zakładka do ekstrakcji podtablicy"""
@@ -780,35 +820,37 @@ class MainApp(tk.Tk):
 
     def _clear_preprocessing_data(self, df: pd.DataFrame) -> None:
         """Resetuje stan po wczytaniu nowego pliku"""
-        self.current_result_df = None
-        self.result_tree.delete(*self.result_tree.get_children())
-
         # Aktualizacja list kolumn
-        for listbox in [self.duplicates_listbox, self.missing_listbox]:
-            listbox.delete(0, tk.END)
-            for col in df.columns:
-                listbox.insert(tk.END, col)
+        for listbox in [getattr(self, 'duplicates_listbox', None),
+                        getattr(self, 'missing_listbox', None)]:
+            if listbox is not None:
+                listbox.delete(0, tk.END)
+                for col in df.columns:
+                    listbox.insert(tk.END, col)
 
-        self.encoding_listbox.delete(0, tk.END)
-        categorical_cols = [col for col in df.columns if
-                            pd.api.types.is_categorical_dtype(df[col]) or pd.api.types.is_object_dtype(df[col])]
-        for col in categorical_cols:
-            self.encoding_listbox.insert(tk.END, col)
+        if hasattr(self, 'encoding_listbox'):
+            self.encoding_listbox.delete(0, tk.END)
+            categorical_cols = [col for col in df.columns if
+                                pd.api.types.is_categorical_dtype(df[col]) or pd.api.types.is_object_dtype(df[col])]
+            for col in categorical_cols:
+                self.encoding_listbox.insert(tk.END, col)
 
-        # Aktualizacja target combobox
-        numeric_cols = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
-        self.target_combobox["values"] = numeric_cols
-        if numeric_cols:
-            self.target_combobox.set(numeric_cols[0])
+        if hasattr(self, 'target_combobox'):
+            numeric_cols = [col for col in df.columns if pd.api.types.is_numeric_dtype(df[col])]
+            self.target_combobox["values"] = numeric_cols
+            if numeric_cols:
+                self.target_combobox.set(numeric_cols[0])
 
-        self.scaling_listbox.delete(0, tk.END)
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        for col in numeric_cols:
-            self.scaling_listbox.insert(tk.END, col)
+        if hasattr(self, 'scaling_listbox'):
+            self.scaling_listbox.delete(0, tk.END)
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            for col in numeric_cols:
+                self.scaling_listbox.insert(tk.END, col)
 
-        self.replace_col_combobox["values"] = df.columns.tolist()
-        if df.columns.any():
-            self.replace_col_combobox.set(df.columns[0])
+        if hasattr(self, 'replace_col_combobox'):
+            self.replace_col_combobox["values"] = df.columns.tolist()
+            if df.columns.any():
+                self.replace_col_combobox.set(df.columns[0])
 
         # Czyszczenie reguł
         self._replacement_rules = {}
@@ -821,7 +863,6 @@ class MainApp(tk.Tk):
             self.file_info_var.set(f"Wczytano: {self.path.split('/')[-1]} ({len(df)}×{len(df.columns)})")
         else:
             self.file_info_var.set("Brak wczytanego pliku")
-
     def _run_fill_missing(self) -> None:
         if self.df is None:
             messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
@@ -1158,6 +1199,12 @@ class MainApp(tk.Tk):
         self._build_corr_tab()
         self._build_visualization_tab()
         self._build_non_numeric_stats_tab()
+
+        # Odśwież dane jeśli są dostępne
+        if self.df is not None:
+            self._update_all_columns(self.df)
+            if hasattr(self, 'x_col'):
+                self._update_visualization_columns(self.df)
 
     # ---------- Statystyki liczbowe ---------------------------------------
     def _build_numeric_stats_tab(self) -> None:
@@ -1512,23 +1559,39 @@ class MainApp(tk.Tk):
         # Zakładka klasyfikacji
         classification_tab = ttk.Frame(self.nb)
         self.nb.add(classification_tab, text="Klasyfikacja")
-
-        # Dodaj loader CSV do zakładki klasyfikacji
-        #self._add_loader(classification_tab, on_success=lambda df: self._update_all_columns(df))
-
-        # Buduj resztę interfejsu klasyfikacji
         self._build_classification_tab(classification_tab)
 
         # Zakładka klasteryzacji
         clustering_tab = ttk.Frame(self.nb)
         self.nb.add(clustering_tab, text="Klasteryzacja")
-
-        # Dodaj loader CSV do zakładki klasteryzacji
-        #self._add_loader(clustering_tab, on_success=lambda df: self._update_all_columns(df))
-
-        # Buduj resztę interfejsu klasteryzacji
         self._build_clustering_tab(clustering_tab)
 
+        # Odśwież dane jeśli są dostępne
+        if self.df is not None:
+            self._update_all_columns(self.df)
+            if hasattr(self, 'feature_listbox'):
+                self._update_classification_columns(self.df)
+            if hasattr(self, 'clustering_listbox'):
+                self._update_clustering_columns(self.df)
+
+    # ─────────────────────────────────────────────
+    def _update_clustering_columns(self, df: pd.DataFrame) -> None:
+        """Aktualizuje listy kolumn w zakładce klasteryzacji"""
+        if hasattr(self, 'clustering_listbox'):
+            self.clustering_listbox.delete(0, tk.END)
+            for col in df.columns:
+                self.clustering_listbox.insert(tk.END, col)
+    def _update_classification_columns(self, df: pd.DataFrame) -> None:
+        """Aktualizuje listy kolumn w zakładce klasyfikacji"""
+        if hasattr(self, 'feature_listbox'):
+            self.feature_listbox.delete(0, tk.END)
+            for col in df.columns:
+                self.feature_listbox.insert(tk.END, col)
+
+        if hasattr(self, 'target_combobox'):
+            self.target_combobox['values'] = df.columns.tolist()
+            if df.columns.any():
+                self.target_combobox.set(df.columns[0])
     # ─────────────────────────────────────────────
     #  >>> 2. ZAKŁADKA - KLASYFIKACJA  <<<
     # ─────────────────────────────────────────────
@@ -1738,50 +1801,6 @@ class MainApp(tk.Tk):
     def on_close(self):
         self.destroy()
         plt.close('all')  # zamyka wszystkie figury matplotlib
-
-    # ─────────────────────────────────────────────
-    #  Commit: zapisujemy zmiany jako główny DataFrame
-    # ─────────────────────────────────────────────
-    def _commit_df(self, result, *, dict_key: str | None = None) -> None:
-        """
-        Przyjmuje:
-            •  result  – DataFrame **lub** słownik zawierający DataFrame,
-            •  dict_key – jeśli wynik jest słownikiem, klucz pod którym
-                          spodziewamy się DataFrame’u (np. 'df_cleaned').
-        Aktualizuje:
-            •  self.df i self.current_result_df,
-            •  wszystkie listy/comboboxy przez _update_all_columns,
-            •  tabelę z wynikami i przyciski nawigacji.
-        """
-        if result is None:
-            return
-
-        # 1) wyciągnij DataFrame z wyniku
-        if isinstance(result, pd.DataFrame):
-            new_df = result
-
-        elif isinstance(result, dict):
-            # jeżeli nie podano klucza, spróbuj odgadnąć
-            if dict_key is None:
-                for k in ("df_cleaned", "df_zakodowany", "df", "df_scaled"):
-                    if k in result:
-                        dict_key = k
-                        break
-            if dict_key is None or dict_key not in result:
-                raise ValueError("Nie znaleziono DataFrame’u w wyniku funkcji.")
-            new_df = result[dict_key]
-
-        else:
-            raise TypeError("Nieznany typ wyniku operacji.")
-
-        # 2) zapisz jako główny DataFrame aplikacji
-        self.df = new_df
-        self.current_result_df = new_df
-
-        # 3) odśwież interfejs
-        self._update_all_columns(new_df)       # listy kolumn, comboboxy, itp.
-        self._display_dataframe(new_df)        # widok w tabeli
-        self.save_btn.config(state="normal")   # można zapisać
 
 
 if __name__ == "__main__":
