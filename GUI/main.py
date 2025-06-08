@@ -927,87 +927,91 @@ class MainApp(tk.Tk):
             self._set_ready()
 
     def _build_encoding_tab(self, parent):
-        """Zakładka do transformacji kategorycznych"""
+        """Zakładka do kodowania danych"""
         control_frame = ttk.Frame(parent)
-        control_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        control_frame.pack(fill="x", padx=10, pady=5)
 
-        # Wybór metody kodowania
+        # Metoda kodowania
         ttk.Label(control_frame, text="Metoda kodowania:").pack(anchor="w")
-        self.encoding_method = tk.StringVar(value="one_hot")
-        methods = [("One-Hot", "one_hot"), ("Binarne", "binary"), ("Target", "target")]
         method_frame = ttk.Frame(control_frame)
         method_frame.pack(fill="x", pady=5)
 
-        for text, value in methods:
-            ttk.Radiobutton(method_frame, text=text, variable=self.encoding_method, value=value).pack(side="left")
+        self.encoding_method = tk.StringVar(value="one-hot")
+        methods = [
+            ("Jedno gorące", "one-hot"),
+            ("Binarne", "binary"),
+            ("Docelowe", "target")  # Przywrócono Target Encoding
+        ]
+        for text, val in methods:
+            ttk.Radiobutton(method_frame, text=text,
+                            variable=self.encoding_method, value=val).pack(side="left", padx=5)
 
         # Lista kolumn do kodowania
-        ttk.Label(control_frame, text="Kolumny do zakodowania:").pack(anchor="w", pady=(10, 0))
-        self.encoding_listbox = tk.Listbox(control_frame, selectmode="multiple", height=5, exportselection=False)
-        self.encoding_listbox.pack(fill="x", padx=5, pady=5)
+        ttk.Label(control_frame, text="Kolumny do zakodowania:").pack(anchor="w", pady=(5, 0))
+        self.encoding_listbox = tk.Listbox(control_frame, selectmode="multiple", height=6)
+        self.encoding_listbox.pack(fill="x", pady=5)
 
+        # Przyciski wyboru
         btn_frame = ttk.Frame(control_frame)
         btn_frame.pack(fill="x", pady=5)
-        ttk.Button(btn_frame, text="Wybierz wszystkie", command=lambda: self._select_all(self.encoding_listbox)).pack(
-            side="left", padx=5)
+        ttk.Button(btn_frame, text="Wybierz wszystkie",
+                   command=lambda: self._select_all(self.encoding_listbox)).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="Czyść zaznaczenie",
                    command=lambda: self._clear_selection(self.encoding_listbox)).pack(side="left", padx=5)
 
-        # Dodatkowe opcje dla poszczególnych metod
-        self.encoding_options_frame = ttk.Frame(control_frame)
-        self.encoding_options_frame.pack(fill="x", pady=5)
-
-        # One-Hot options
-        self.oh_drop_first = tk.BooleanVar()
-        ttk.Checkbutton(self.encoding_options_frame, text="Usuń pierwszą kolumnę", variable=self.oh_drop_first).pack(
-            side="left")
-
-        # Target encoding options
-        ttk.Label(self.encoding_options_frame, text="Kolumna docelowa:").pack(side="left", padx=5)
-        self.target_combobox = ttk.Combobox(self.encoding_options_frame, state="readonly")
-        self.target_combobox.pack(side="left")
-
         # Przycisk wykonania
-        ttk.Button(control_frame, text="Zastosuj kodowanie", command=self._run_encoding).pack(side="right", padx=5,
-                                                                                              pady=10)
+        ttk.Button(control_frame, text="Zastosuj kodowanie",
+                   command=self._run_encoding).pack(side="right", pady=10)
 
-    def _run_encoding(self) -> None:
+    def _run_encoding(self):
+        """Uruchamia proces kodowania"""
         if self.df is None:
-            messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
+            messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
             return
+
         selected_cols = [self.encoding_listbox.get(i)
                          for i in self.encoding_listbox.curselection()]
         if not selected_cols:
-            messagebox.showerror("Błąd", "Proszę wybrać kolumny do kodowania")
+            messagebox.showwarning("Brak wyboru", "Wybierz kolumny do zakodowania!")
             return
-        method = self.encoding_method.get()
-        self._set_busy("Kodowanie kategorii…")
+
+        self._set_busy("Kodowanie danych...")
         try:
-            if method == "one_hot":
+            # Wybór odpowiedniej funkcji kodowania na podstawie wybranej metody
+            method = self.encoding_method.get()
+
+            if method == "one-hot":
                 result = jedno_gorace_kodowanie(
-                    self.df, kolumny=selected_cols,
-                    usun_pierwsza=self.oh_drop_first.get(), wyswietl_informacje=True
+                    self.df,
+                    kolumny=selected_cols,
+                    usun_pierwsza=False,  # Zawsze False, bo usunęliśmy tę opcję
+                    wyswietl_informacje=True
                 )
-                self.current_result_df = result['df_zakodowany']
+                self._commit_df(result['df_zakodowany'])
+
             elif method == "binary":
                 result = binarne_kodowanie(
-                    self.df, kolumny=selected_cols, wyswietlaj_informacje=True
-                )
-                self.current_result_df = result['df_zakodowany']
-            else:  # target
-                target_col = self.target_combobox.get()
-                if not target_col:
-                    raise ValueError("Proszę wybrać kolumnę docelową")
-                result = kodowanie_docelowe(
-                    self.df, kolumny=selected_cols, target=target_col,
+                    self.df,
+                    kolumny=selected_cols,
                     wyswietlaj_informacje=True
                 )
-                self.current_result_df = result['df_encoded']
+                self._commit_df(result['df_zakodowany'])
 
-            self._display_dataframe(self.current_result_df)
-            messagebox.showinfo("Sukces", "Pomyślnie zastosowano kodowanie!")
-            # <---  commit  --->
-            self._commit_df(result, dict_key='df_zakodowany')
+            elif method == "target":
+                # Znajdź kolumnę numeryczną do użycia jako target
+                numeric_cols = self.df.select_dtypes(include=['int64', 'float64']).columns
+                if len(numeric_cols) == 0:
+                    raise ValueError("Brak kolumn numerycznych potrzebnych dla kodowania docelowego")
+
+                target_column = numeric_cols[0]  # Użyj pierwszej kolumny numerycznej jako target
+                result = kodowanie_docelowe(
+                    self.df,
+                    kolumny=selected_cols,
+                    target=target_column,
+                    wyswietlaj_informacje=True
+                )
+                self._commit_df(result['df_encoded'])
+
             messagebox.showinfo("Sukces", "Kodowanie zakończone!")
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
