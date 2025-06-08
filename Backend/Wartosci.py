@@ -1,87 +1,134 @@
-from typing import Union, Dict, Optional
+from typing import Union, Dict, Optional, Any
 
 import pandas as pd
 
 from Dane.Dane import _optymalizuj_pamiec, wczytaj_csv
 
 
-def zamien_wartosci(
-        df: pd.DataFrame,
-        kolumna: str = None,
-        stara_wartosc: Union[str, int, float, pd.Timestamp] = None,
-        nowa_wartosc: Union[str, int, float, pd.Timestamp] = None,
-        reguly: Dict[str, Dict[Union[str, int, float], Union[str, int, float]]] = None,
-        wyswietlaj_informacje: bool = True
-) -> Optional[pd.DataFrame]:
+def zamien_wartosci(df: pd.DataFrame, reguly: Dict[str, Dict[Any, Any]] = None,
+                    wyswietlaj_informacje: bool = False) -> pd.DataFrame:
     """
-    Zastępuje wartości w DataFrame:
-    - Ręcznie: Zamiana konkretnej wartości w konkretnej kolumnie
-    - Automatycznie: Zamiana wielu wartości w wielu kolumnach na podstawie słownika reguł
+    Zamienia wartości w DataFrame według podanych reguł.
+    Uproszczona i bardziej niezawodna wersja.
 
     Parametry:
     ---------
     df : pd.DataFrame
-        Wejściowy DataFrame wczytany przez `wczytaj_csv`.
-    kolumna : str, opcjonalnie
-        Nazwa kolumny do ręcznej zmiany wartości.
-    stara_wartosc : Union[str, int, float, pd.Timestamp], opcjonalnie
-        Wartość do zamiany (dla trybu ręcznego).
-    nowa_wartosc : Union[str, int, float, pd.Timestamp], opcjonalnie
-        Nowa wartość (dla trybu ręcznego).
-    reguly : Dict[str, Dict[...]], opcjonalnie
-        Słownik reguł: `{kolumna: {stara: nowa}}`.
-    wyswietlaj_informacje : bool
-        Czy wyświetlać szczegółowe informacje diagnostyczne.
+        DataFrame do modyfikacji
+    reguly : Dict[str, Dict[Any, Any]], opcjonalne
+        Słownik reguł zamiany, gdzie kluczem głównym jest nazwa kolumny,
+        a wartością słownik {stara_wartosc: nowa_wartosc}
+    wyswietlaj_informacje : bool, opcjonalne
+        Czy wyświetlać informacje o liczbie zamienionych wartości
 
     Zwraca:
     -------
-    Optional[pd.DataFrame]
-        Zmodyfikowany DataFrame lub None w przypadku błędu.
+    pd.DataFrame
+        Zmodyfikowany DataFrame
     """
-    try:
-        wynik_df = df.copy()
+    if reguly is None or not reguly:
+        if wyswietlaj_informacje:
+            print("Brak reguł zamiany.")
+        return df
 
-        # Walidacja: Ręczna zamiana
-        if kolumna and stara_wartosc is not None and nowa_wartosc is not None:
-            if kolumna not in wynik_df.columns:
-                raise ValueError(f"Kolumna '{kolumna}' nie istnieje w DataFrame.")
+    df_wynik = df.copy()
+    licznik_zmian = 0
 
-            # Obsługa kategorii: jeśli kolumna jest typu category, konwertujemy na object
-            if pd.api.types.is_categorical_dtype(wynik_df[kolumna]):
-                wynik_df[kolumna] = wynik_df[kolumna].astype(object)
-
-            # Zamiana wartości
-            wynik_df[kolumna] = wynik_df[kolumna].replace(stara_wartosc, nowa_wartosc)
-
+    for kolumna, zamiana in reguly.items():
+        if kolumna not in df_wynik.columns:
             if wyswietlaj_informacje:
-                print(f"[INFO] 🔧 Zamieniono '{stara_wartosc}' na '{nowa_wartosc}' w kolumnie '{kolumna}'.")
+                print(f"Kolumna '{kolumna}' nie istnieje w danych.")
+            continue
 
-        # Walidacja: Automatyczna zamiana
-        elif reguly:
-            for kolumna, zmiany in reguly.items():
-                if kolumna not in wynik_df.columns:
-                    raise ValueError(f"Kolumna '{kolumna}' nie istnieje w DataFrame.")
+        # Sprawdź czy kolumna jest typu kategorycznego
+        is_categorical = isinstance(df_wynik[kolumna].dtype, pd.CategoricalDtype)
 
-                if pd.api.types.is_categorical_dtype(wynik_df[kolumna]):
-                    wynik_df[kolumna] = wynik_df[kolumna].astype(object)
+        # Dla danych kategorycznych, potrzebujemy dodać nowe kategorie
+        if is_categorical:
+            current_categories = df_wynik[kolumna].cat.categories.tolist()
+            new_categories = []
+            for _, nowa_wartosc in zamiana.items():
+                if nowa_wartosc not in current_categories and nowa_wartosc not in new_categories:
+                    new_categories.append(nowa_wartosc)
 
-                for stara, nowa in zmiany.items():
-                    wynik_df[kolumna] = wynik_df[kolumna].replace(stara, nowa)
+            if new_categories:
+                df_wynik[kolumna] = df_wynik[kolumna].cat.add_categories(new_categories)
 
-                if wyswietlaj_informacje:
-                    print(f"[INFO] Automatycznie zaktualizowano kolumnę '{kolumna}': {zmiany}")
+        # PRZETWÓRZ REGUŁY ZAMIANY
+        for stara_wartosc, nowa_wartosc in zamiana.items():
+            # Zapisz oryginalny typ kolumny
+            col_dtype = df_wynik[kolumna].dtype
+            is_numeric = pd.api.types.is_numeric_dtype(col_dtype)
 
-        else:
-            raise ValueError(
-                "Podaj albo parametry ręczne (kolumna, stara_wartosc, nowa_wartosc), albo reguły automatyczne.")
+            # Obsługa NaN
+            if pd.isna(stara_wartosc) or (isinstance(stara_wartosc, str) and stara_wartosc.lower() == "nan"):
+                mask = df_wynik[kolumna].isna()
+                ile_zmian = mask.sum()
+                if ile_zmian > 0:
+                    df_wynik.loc[mask, kolumna] = nowa_wartosc
+                    licznik_zmian += ile_zmian
+                    if wyswietlaj_informacje:
+                        print(f"Zamieniono {ile_zmian} wartości NaN na '{nowa_wartosc}' w kolumnie '{kolumna}'")
+                else:
+                    if wyswietlaj_informacje:
+                        print(f"Nie znaleziono wartości NaN w kolumnie '{kolumna}'")
+                continue
 
-        # Optymalizacja pamięci po zmianach
-        wynik_df = _optymalizuj_pamiec(wynik_df)
+            # Dla wartości liczbowych
+            if is_numeric:
+                try:
+                    # Konwertuj stara_wartosc do odpowiedniego typu liczbowego
+                    if isinstance(stara_wartosc, str):
+                        if '.' in stara_wartosc:
+                            stara_wartosc_num = float(stara_wartosc)
+                        else:
+                            stara_wartosc_num = int(stara_wartosc)
+                    else:
+                        stara_wartosc_num = stara_wartosc
 
-        return wynik_df
+                    # Użyj alternatywnej metody zamiany wartości liczbowych:
+                    # zamiast maski i loc, użyj replace
+                    przed_zmiana = df_wynik[kolumna].copy()
+                    df_wynik[kolumna] = df_wynik[kolumna].replace(stara_wartosc_num, nowa_wartosc)
 
-    except Exception as e:
-        print(f"[BŁĄD] Nie udało się zastąpić wartości: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
-        return None
+                    # Sprawdź ile wartości zostało zmienionych
+                    ile_zmian = (df_wynik[kolumna] != przed_zmiana).sum()
+                    licznik_zmian += ile_zmian
+
+                    if wyswietlaj_informacje:
+                        if ile_zmian > 0:
+                            print(
+                                f"Zamieniono {ile_zmian} wystąpień '{stara_wartosc}' na '{nowa_wartosc}' w kolumnie '{kolumna}'")
+                        else:
+                            print(f"Nie znaleziono wartości '{stara_wartosc}' w kolumnie '{kolumna}'")
+
+                except Exception as e:
+                    if wyswietlaj_informacje:
+                        print(
+                            f"Błąd przy zamianie wartości liczbowej '{stara_wartosc}' w kolumnie '{kolumna}': {str(e)}")
+            else:
+                # Dla wartości nieliczbowych
+                try:
+                    # Użyj standardowej metody replace
+                    przed_zmiana = df_wynik[kolumna].copy()
+                    df_wynik[kolumna] = df_wynik[kolumna].replace(stara_wartosc, nowa_wartosc)
+
+                    # Sprawdź ile wartości zostało zmienionych
+                    ile_zmian = (df_wynik[kolumna] != przed_zmiana).sum()
+                    licznik_zmian += ile_zmian
+
+                    if wyswietlaj_informacje:
+                        if ile_zmian > 0:
+                            print(
+                                f"Zamieniono {ile_zmian} wystąpień '{stara_wartosc}' na '{nowa_wartosc}' w kolumnie '{kolumna}'")
+                        else:
+                            print(f"Nie znaleziono wartości '{stara_wartosc}' w kolumnie '{kolumna}'")
+
+                except Exception as e:
+                    if wyswietlaj_informacje:
+                        print(f"Błąd przy zamianie wartości '{stara_wartosc}' w kolumnie '{kolumna}': {str(e)}")
+
+    if wyswietlaj_informacje:
+        print(f"Łącznie zamieniono {licznik_zmian} wartości.")
+
+    return df_wynik

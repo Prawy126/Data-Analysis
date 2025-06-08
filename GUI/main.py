@@ -1,4 +1,5 @@
 import tkinter as tk
+import traceback
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import numpy  as np
@@ -77,6 +78,7 @@ class MainApp(tk.Tk):
         # Dodaj style dla przycisków
         style = ttk.Style()
 
+        self.column_type_var = tk.StringVar(value="")
         # Styl dla głównego przycisku
         style.configure('Accent.TButton',
                         font=('Arial', 9, 'bold'),
@@ -845,7 +847,7 @@ class MainApp(tk.Tk):
         if hasattr(self, 'encoding_listbox'):
             self.encoding_listbox.delete(0, tk.END)
             categorical_cols = [col for col in df.columns if
-                                pd.api.types.is_categorical_dtype(df[col]) or pd.api.types.is_object_dtype(df[col])]
+                                isinstance(df[col].dtype, pd.CategoricalDtype) or pd.api.types.is_object_dtype(df[col])]
             for col in categorical_cols:
                 self.encoding_listbox.insert(tk.END, col)
 
@@ -877,6 +879,7 @@ class MainApp(tk.Tk):
             self.file_info_var.set(f"Wczytano: {self.path.split('/')[-1]} ({len(df)}×{len(df.columns)})")
         else:
             self.file_info_var.set("Brak wczytanego pliku")
+
     def _run_fill_missing(self) -> None:
         if self.df is None:
             messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
@@ -1127,16 +1130,35 @@ class MainApp(tk.Tk):
             messagebox.showwarning("Brak danych", "Wypełnij wszystkie pola!")
             return
 
-        # Konwersja typów dla wartości numerycznych
-        try:
-            old_val = float(old_val) if '.' in old_val else int(old_val)
-        except ValueError:
-            pass
+        # Sprawdź typ danych kolumny
+        if col in self.df.columns:
+            col_dtype = self.df[col].dtype
 
-        try:
-            new_val = float(new_val) if '.' in new_val else int(new_val)
-        except ValueError:
-            pass
+            # Obsługa NaN
+            if old_val.lower() == "nan":
+                old_val = np.nan
+            else:
+                # Konwersja typów zgodnie z typem kolumny
+                if pd.api.types.is_numeric_dtype(col_dtype) and not isinstance(col_dtype, pd.CategoricalDtype):
+                    try:
+                        if '.' in old_val:
+                            old_val = float(old_val)
+                        else:
+                            old_val = int(old_val)
+                    except ValueError:
+                        # Jeśli konwersja się nie powiodła, zostaw jako string
+                        pass
+
+            # Konwersja nowej wartości
+            if pd.api.types.is_numeric_dtype(col_dtype) and not isinstance(col_dtype, pd.CategoricalDtype):
+                try:
+                    if '.' in new_val:
+                        new_val = float(new_val)
+                    else:
+                        new_val = int(new_val)
+                except ValueError:
+                    # Jeśli konwersja się nie powiodła, zostaw jako string
+                    pass
 
         # Dodanie reguły do słownika
         if col not in self._replacement_rules:
@@ -1145,13 +1167,57 @@ class MainApp(tk.Tk):
         self._replacement_rules[col][old_val] = new_val
         self._update_rules_listbox()
 
+    def _run_value_replacement(self) -> None:
+        """Uruchamia zamianę wartości z dodatkowym debugowaniem"""
+        if self.df is None:
+            messagebox.showwarning("Brak danych", "Najpierw wczytaj plik CSV!")
+            return
+
+        if not self._replacement_rules:
+            messagebox.showwarning("Brak reguł", "Dodaj przynajmniej jedną regułę zamiany!")
+            return
+
+        self._set_busy("Zamiana wartości…")
+        try:
+            # Debugowanie - wypisz reguły przed zamianą
+            print("Reguły zamiany:", self._replacement_rules)
+
+            # Wykonaj zamianę wartości
+            result = zamien_wartosci(
+                self.df, reguly=self._replacement_rules,
+                wyswietlaj_informacje=True
+            )
+
+            # Sprawdź czy zamiana miała efekt
+            if result.equals(self.df):
+                messagebox.showinfo("Informacja", "Nie dokonano żadnych zmian w danych.")
+            else:
+                self._commit_df(result)
+                messagebox.showinfo("Sukces", "Wartości zamienione!")
+
+        except Exception as e:
+            messagebox.showerror("Błąd", str(e))
+            traceback.print_exc()  # Wypisz pełny traceback w konsoli
+        finally:
+            self._set_ready()
+
     def _update_rules_listbox(self):
-        """Aktualizuje listę reguł w UI"""
+        """Aktualizuje listę reguł w UI z lepszym formatowaniem"""
         self.rules_listbox.delete(0, tk.END)
         for col, rules in self._replacement_rules.items():
             for old_val, new_val in rules.items():
-                self.rules_listbox.insert(tk.END, f"{col}: {old_val} → {new_val}")
+                # Lepsze formatowanie NaN
+                if pd.isna(old_val):
+                    old_val_disp = "NaN"
+                else:
+                    old_val_disp = str(old_val)
 
+                if pd.isna(new_val):
+                    new_val_disp = "NaN"
+                else:
+                    new_val_disp = str(new_val)
+
+                self.rules_listbox.insert(tk.END, f"{col}: {old_val_disp} → {new_val_disp}")
     def _remove_rule(self):
         """Usuwa zaznaczoną regułę"""
         selection = self.rules_listbox.curselection()
@@ -1165,17 +1231,36 @@ class MainApp(tk.Tk):
         # Parsowanie usuwanej reguły
         col_part, vals_part = selected_item.split(":")
         col = col_part.strip()
-        old_val = vals_part.split("→")[0].strip()
 
-        # Konwersja wartości jeśli potrzeba
-        try:
-            old_val = float(old_val) if '.' in old_val else int(old_val)
-        except ValueError:
-            pass
+        # Rozbicie na starą i nową wartość
+        if "→" in vals_part:
+            old_val_str = vals_part.split("→")[0].strip()
+        else:
+            old_val_str = vals_part.strip()
+
+        # Konwersja wartości
+        if old_val_str.lower() == "nan":
+            old_val = np.nan
+        else:
+            try:
+                if '.' in old_val_str:
+                    old_val = float(old_val_str)
+                else:
+                    old_val = int(old_val_str)
+            except ValueError:
+                old_val = old_val_str
 
         # Usuwanie z słownika reguł
-        if col in self._replacement_rules and old_val in self._replacement_rules[col]:
-            del self._replacement_rules[col][old_val]
+        if col in self._replacement_rules:
+            if pd.isna(old_val) and any(pd.isna(k) for k in self._replacement_rules[col].keys()):
+                # Dla NaN, usuń pierwszy klucz który jest NaN
+                for k in list(self._replacement_rules[col].keys()):
+                    if pd.isna(k):
+                        del self._replacement_rules[col][k]
+                        break
+            elif old_val in self._replacement_rules[col]:
+                del self._replacement_rules[col][old_val]
+
             if not self._replacement_rules[col]:
                 del self._replacement_rules[col]
 
@@ -1933,6 +2018,24 @@ class MainApp(tk.Tk):
             self.target_combobox['values'] = df.columns.tolist()
             if df.columns.any():
                 self.target_combobox.set(df.columns[0])
+
+    def _update_column_type_info(self, event=None):
+        """Aktualizuje informację o typie danych wybranej kolumny"""
+        col = self.replace_col_combobox.get()
+        if col and self.df is not None and col in self.df.columns:
+            col_type = self.df[col].dtype
+            is_numeric = pd.api.types.is_numeric_dtype(col_type)
+            is_categorical = isinstance(col_type, pd.CategoricalDtype)
+
+            type_info = f"Typ: {col_type}"
+            if is_numeric:
+                type_info += " (liczbowy)"
+            if is_categorical:
+                type_info += " (kategoryczny)"
+
+            self.column_type_var.set(type_info)
+        else:
+            self.column_type_var.set("")
     # ─────────────────────────────────────────────
     #  >>> 2. ZAKŁADKA - KLASYFIKACJA  <<<
     # ─────────────────────────────────────────────
