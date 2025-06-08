@@ -486,25 +486,176 @@ class MainApp(tk.Tk):
         control_frame = ttk.Frame(parent)
         control_frame.pack(fill="x", padx=10, pady=10)
 
-        # Wiersze do obsługi
-        ttk.Label(control_frame, text="Wiersze (indeksy, np. 0,2,5):").grid(row=0, column=0, sticky="w")
-        self.rows_entry = ttk.Entry(control_frame)
-        self.rows_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
+        # Sekcja wyboru wierszy
+        row_frame = ttk.LabelFrame(control_frame, text="Wybór wierszy", padding=(5, 5))
+        row_frame.pack(fill="x", pady=(0, 5))
+
+        # Radio buttons do wyboru trybu selekcji wierszy
+        self.row_selection_mode = tk.StringVar(value="all")
+        ttk.Radiobutton(row_frame, text="Wszystkie wiersze",
+                        variable=self.row_selection_mode,
+                        value="all",
+                        command=self._update_row_selection).pack(anchor="w")
+
+        range_frame = ttk.Frame(row_frame)
+        range_frame.pack(fill="x", pady=2)
+        ttk.Radiobutton(range_frame, text="Zakres wierszy:",
+                        variable=self.row_selection_mode,
+                        value="range",
+                        command=self._update_row_selection).pack(side="left")
+
+        # Frame dla pól zakresu
+        range_entry_frame = ttk.Frame(range_frame)
+        range_entry_frame.pack(side="left", padx=5)
+
+        # Pola do wprowadzania zakresu
+        self.row_start = ttk.Entry(range_entry_frame, width=8)
+        self.row_start.pack(side="left")
+        ttk.Label(range_entry_frame, text="-").pack(side="left", padx=2)
+        self.row_end = ttk.Entry(range_entry_frame, width=8)
+        self.row_end.pack(side="left")
+
+        # Lista konkretnych wierszy
+        specific_frame = ttk.Frame(row_frame)
+        specific_frame.pack(fill="x", pady=2)
+        ttk.Radiobutton(specific_frame, text="Lista wierszy:",
+                        variable=self.row_selection_mode,
+                        value="specific",
+                        command=self._update_row_selection).pack(side="left")
+        self.specific_rows = ttk.Entry(specific_frame)
+        self.specific_rows.pack(side="left", padx=5, fill="x", expand=True)
 
         # Kolumny do obsługi
-        ttk.Label(control_frame, text="Kolumny (nazwy, np. age,salary):").grid(row=1, column=0, sticky="w")
-        self.cols_entry = ttk.Entry(control_frame)
-        self.cols_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
+        col_frame = ttk.LabelFrame(control_frame, text="Wybór kolumn", padding=(5, 5))
+        col_frame.pack(fill="x", pady=5)
+
+        # Radio buttons do wyboru kolumn
+        self.col_selection_mode = tk.StringVar(value="all")
+        ttk.Radiobutton(col_frame, text="Wszystkie kolumny",
+                        variable=self.col_selection_mode,
+                        value="all",
+                        command=self._update_col_selection).pack(anchor="w")
+
+        specific_col_frame = ttk.Frame(col_frame)
+        specific_col_frame.pack(fill="x", pady=2)
+        ttk.Radiobutton(specific_col_frame, text="Lista kolumn:",
+                        variable=self.col_selection_mode,
+                        value="specific",
+                        command=self._update_col_selection).pack(side="left")
+        self.specific_cols = ttk.Entry(specific_col_frame)
+        self.specific_cols.pack(side="left", padx=5, fill="x", expand=True)
 
         # Tryb działania
+        mode_frame = ttk.LabelFrame(control_frame, text="Tryb działania", padding=(5, 5))
+        mode_frame.pack(fill="x", pady=5)
         self.mode_var = tk.StringVar(value="keep")
-        ttk.Radiobutton(control_frame, text="Zachowaj", variable=self.mode_var, value="keep").grid(row=2, column=0,
-                                                                                                   sticky="w")
-        ttk.Radiobutton(control_frame, text="Usuń", variable=self.mode_var, value="remove").grid(row=2, column=1,
-                                                                                                 sticky="w")
+        ttk.Radiobutton(mode_frame, text="Zachowaj wybrane",
+                        variable=self.mode_var, value="keep").pack(side="left", padx=5)
+        ttk.Radiobutton(mode_frame, text="Usuń wybrane",
+                        variable=self.mode_var, value="remove").pack(side="left", padx=5)
 
-        ttk.Button(control_frame, text="Ekstrahuj podtablicę", command=self._run_extraction) \
-            .grid(row=3, column=0, columnspan=2, pady=5)
+        ttk.Button(control_frame, text="Ekstrahuj podtablicę",
+                   command=self._run_extraction).pack(fill="x", pady=10)
+
+    def _update_row_selection(self):
+        """Aktualizuje stan pól do wyboru wierszy"""
+        mode = self.row_selection_mode.get()
+        if mode == "range":
+            self.row_start.config(state="normal")
+            self.row_end.config(state="normal")
+            self.specific_rows.config(state="disabled")
+        elif mode == "specific":
+            self.row_start.config(state="disabled")
+            self.row_end.config(state="disabled")
+            self.specific_rows.config(state="normal")
+        else:  # "all"
+            self.row_start.config(state="disabled")
+            self.row_end.config(state="disabled")
+            self.specific_rows.config(state="disabled")
+
+    def _update_col_selection(self):
+        """Aktualizuje stan pól do wyboru kolumn"""
+        mode = self.col_selection_mode.get()
+        if mode == "specific":
+            self.specific_cols.config(state="normal")
+        else:  # "all"
+            self.specific_cols.config(state="disabled")
+
+    def _run_extraction(self):
+        """Uruchamia proces ekstrakcji"""
+        if self.df is None:
+            messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
+            return
+
+        try:
+            # Przygotowanie parametrów wierszy
+            rows = None
+            if self.row_selection_mode.get() == "range":
+                try:
+                    start = int(self.row_start.get())
+                    end = int(self.row_end.get())
+
+                    # Walidacja zakresu
+                    if start < 0:
+                        raise ValueError("Początek zakresu nie może być ujemny")
+                    if end < start:
+                        raise ValueError("Koniec zakresu musi być większy niż początek")
+                    if end >= len(self.df):
+                        raise ValueError(f"Koniec zakresu przekracza liczbę wierszy ({len(self.df)})")
+
+                    rows = list(range(start, end + 1))
+                except ValueError as e:
+                    if "invalid literal for int()" in str(e):
+                        messagebox.showerror("Błąd", "Proszę wprowadzić prawidłowe liczby w zakresie")
+                    else:
+                        messagebox.showerror("Błąd", str(e))
+                    return
+
+            elif self.row_selection_mode.get() == "specific":
+                try:
+                    if self.specific_rows.get().strip():
+                        rows = [int(x.strip()) for x in self.specific_rows.get().split(",")]
+                        # Walidacja listy wierszy
+                        if any(r < 0 for r in rows):
+                            raise ValueError("Numery wierszy nie mogą być ujemne")
+                        if any(r >= len(self.df) for r in rows):
+                            raise ValueError(f"Numer wiersza przekracza liczbę wierszy ({len(self.df)})")
+                except ValueError as e:
+                    if "invalid literal for int()" in str(e):
+                        messagebox.showerror("Błąd", "Proszę wprowadzić prawidłowe liczby oddzielone przecinkami")
+                    else:
+                        messagebox.showerror("Błąd", str(e))
+                    return
+
+            # Przygotowanie parametrów kolumn
+            cols = None
+            if self.col_selection_mode.get() == "specific":
+                if self.specific_cols.get().strip():
+                    cols = [c.strip() for c in self.specific_cols.get().split(",")]
+                    # Walidacja nazw kolumn
+                    invalid_cols = [c for c in cols if c not in self.df.columns]
+                    if invalid_cols:
+                        messagebox.showerror("Błąd", f"Nieznalezione kolumny: {', '.join(invalid_cols)}")
+                        return
+
+            self._set_busy("Ekstrakcja danych…")
+            try:
+                result = ekstrakcja_podtablicy(
+                    self.df,
+                    rows=rows,
+                    cols=cols,
+                    mode=self.mode_var.get(),
+                    wyswietlaj_informacje=True
+                )
+                self._commit_df(result)
+                messagebox.showinfo("Sukces", "Ekstrakcja zakończona!")
+            except Exception as e:
+                messagebox.showerror("Błąd", str(e))
+            finally:
+                self._set_ready()
+
+        except Exception as e:
+            messagebox.showerror("Błąd", str(e))
 
     def _run_extraction(self) -> None:
         if self.df is None:
