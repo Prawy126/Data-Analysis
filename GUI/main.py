@@ -43,7 +43,8 @@ class MainApp(tk.Tk):
         # Pasek menu
         self.menubar = tk.Menu(self)
         self.config(menu=self.menubar)
-
+        self.current_chart_index = 0
+        self.chart_history = []
         # Menu "Akcje"
         akcje_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="Akcje", menu=akcje_menu)
@@ -1835,8 +1836,9 @@ class MainApp(tk.Tk):
             self._update_visualization_columns(self.df)
         self._update_chart_options()
 
-    def _generate_plot_enhanced(self) -> None:
-        """Rozszerzona wersja generowania wykresów z historią"""
+
+    def _generate_plot_enhanced(self):
+        """Generuje wykres z zapisem do historii"""
         if self.df is None:
             messagebox.showwarning("Błąd", "Najpierw wczytaj plik CSV!")
             return
@@ -1846,53 +1848,23 @@ class MainApp(tk.Tk):
             self.figure.clear()
             ax = self.figure.add_subplot(111)
 
-            # Podstawowe parametry
             params = {
                 "df": self.df,
                 "typ_wykresu": self.chart_type.get(),
                 "kolumna_x": self.x_col.get() or None,
+                "kolumna_y": self.y_col.get() if self.chart_type.get() != "pie" else None,
+                "kolumna_hue": self.hue_col.get() if self.hue_col.get() != "brak" else None,
                 "nazwa_wykresu": self.chart_title.get() or None,
                 "etykieta_x": self.x_label.get() or None,
                 "etykieta_y": self.y_label.get() or None,
-                "palette": getattr(self, 'palette_var', tk.StringVar(value="pastel")).get(),
+                "palette": self.palette_var.get(),
                 "fig": self.figure,
                 "ax": ax
             }
 
-            # Kolumna Y tylko jeśli została wybrana lub jest wymagana
-            chart_type = self.chart_type.get()
-            if chart_type != "pie":  # Pie nigdy nie używa Y
-                y_value = self.y_col.get()
-                if y_value:  # Dodaj tylko jeśli Y jest wybrane
-                    params["kolumna_y"] = y_value
-
-            # Kolumna hue - tylko dla obsługiwanych typów i gdy wybrano wartość
-            if chart_type in ("scatter", "line", "bar"):
-                hue_value = self.hue_col.get()
-                if hue_value and hue_value != "brak":
-                    params["kolumna_hue"] = hue_value
-
-            # Dodatkowe parametry z _chart_vars
-            if hasattr(self, '_chart_vars'):
-                known_params = {'regline', 'sort_values', 'maks_kategorie', 'min_procent',
-                                'show_percentages', 'pie_style'}  # Znane parametry
-
-                for key, var in self._chart_vars.items():
-                    if key in known_params and isinstance(var, (tk.BooleanVar, tk.IntVar, tk.DoubleVar, tk.StringVar)):
-                        params[key] = var.get()
-
             rysuj_wykres(**params)
-
-            # Dodaj do historii
-            self._add_chart_to_history(params.copy())
-
+            self._add_chart_to_history(params.copy())  # Dodaj do historii
             self.canvas.draw()
-
-            # Aktualizuj info
-            chart_type = params["typ_wykresu"]
-            info = f"Typ: {chart_type} | Rekordów: {len(self.df)}"
-            self.chart_info_label_var.set(info)
-
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
         finally:
@@ -1900,20 +1872,8 @@ class MainApp(tk.Tk):
 
     def _add_chart_to_history(self, params):
         """Dodaje wykres do historii"""
-        # Usuń przyszłe wykresy jeśli jesteśmy w środku historii
-        if self.current_chart_index < len(self.chart_history) - 1:
-            self.chart_history = self.chart_history[:self.current_chart_index + 1]
-
-        # Dodaj nowy wykres
         self.chart_history.append(params)
         self.current_chart_index = len(self.chart_history) - 1
-
-        # Ograniczenie do 5 wykresów
-        if len(self.chart_history) > 5:
-            self.chart_history.pop(0)
-            self.current_chart_index -= 1
-
-        self._update_history_buttons()
 
     def _update_history_buttons(self):
         """Aktualizuje przyciski historii"""
@@ -1937,10 +1897,10 @@ class MainApp(tk.Tk):
             self._load_chart_from_history()
 
     def _next_chart(self):
-        """Następny wykres"""
+        """Przechodzi do następnego wykresu"""
         if self.current_chart_index < len(self.chart_history) - 1:
             self.current_chart_index += 1
-            self._load_chart_from_history()
+            self._refresh_current_chart()
 
     def _load_chart_from_history(self):
         """Ładuje wykres z historii"""
@@ -1973,9 +1933,31 @@ class MainApp(tk.Tk):
                 messagebox.showerror("Błąd", f"Nie można zapisać:\n{str(e)}")
 
     def _refresh_current_chart(self):
-        """Odświeża obecny wykres"""
-        if hasattr(self, 'chart_history') and self.chart_history:
-            self._load_chart_from_history()
+        """Odświeża aktualny wykres"""
+        if not self.chart_history:
+            return
+
+        if 0 <= self.current_chart_index < len(self.chart_history):
+            params = self.chart_history[self.current_chart_index].copy()
+            self._set_busy("Odświeżanie wykresu...")
+            try:
+                self.figure.clear()
+                ax = self.figure.add_subplot(111)
+                params['fig'] = self.figure
+                params['ax'] = ax
+                rysuj_wykres(**params)
+                self.canvas.draw()
+            except Exception as e:
+                messagebox.showerror("Błąd", str(e))
+            finally:
+                self._set_ready()
+
+    def _previous_chart(self):
+        """Przechodzi do poprzedniego wykresu"""
+        if self.current_chart_index > 0:
+            self.current_chart_index -= 1
+            self._refresh_current_chart()
+
 
     def _update_chart_options(self, event=None) -> None:
         """Pokazuje tylko te opcje, które pasują do wybranego typu wykresu."""
