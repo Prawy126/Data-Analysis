@@ -1223,46 +1223,88 @@ class MainApp(tk.Tk):
     # ---------- Statystyki liczbowe ---------------------------------------
     def _build_numeric_stats_tab(self) -> None:
         """
-        Zakładka "Statystyki liczbowe".  Użytkownik wybiera kolumny numeryczne,
-        naciska 'Oblicz statystyki'.  Lista kolumn powinna być odświeżona po wczytaniu CSV.
+        Zakładka "Statystyki liczbowe". Oblicza statystyki dla wszystkich kolumn numerycznych.
         """
         tab = ttk.Frame(self.nb)
         self.nb.add(tab, text="Statystyki liczbowe")
-
-        # Lista dostępnych kolumn numerycznych
-        lbl_cols = ttk.Label(tab, text="Wybierz kolumny (Ctrl+klik):")
-        lbl_cols.pack(anchor="w", padx=10)
-
-        listbox = tk.Listbox(tab, selectmode="multiple", height=6, exportselection=False)
-        listbox.pack(fill="x", padx=10, pady=(0, 10))
 
         # Tabela wyników
         cols = ("kolumna", "średnia", "mediana", "min", "max", "std", "liczba")
         tree, ybar, xbar = self._make_treeview(tab, cols)
         tree.pack(fill="both", expand=True, padx=10, pady=5)
 
-        def update_selector(df: pd.DataFrame) -> None:
-            """
-            Callback: uzupełnia listbox nazwami kolumn numerycznych.
-            Wywoływane zawsze po wczytaniu CSV (przez _update_all_columns).
-            """
-            listbox.delete(0, tk.END)
-            numeric = df.select_dtypes(include=[np.number]).columns
-            for col in numeric:
-                listbox.insert(tk.END, col)
+        # Przypisz tabelę jako atrybut klasy, by mieć do niej dostęp z innych metod
+        self.stats_tree = tree
 
-        def run() -> None:
-            """Funkcja wywoływana po kliknięciu 'Oblicz statystyki'."""
-            if not self.path:
-                messagebox.showwarning("Uwaga", "Najpierw wczytaj plik.")
-                return
-            selection = [listbox.get(i) for i in listbox.curselection()]
-            _, wyniki = analizuj_dane_numeryczne(self.path,
-                                                 wybrane_kolumny=selection or None)
+        # Przycisk do obliczania statystyk
+        ttk.Button(tab, text="Oblicz statystyki",
+                   command=self._calculate_numeric_stats) \
+            .pack(anchor="w", padx=10, pady=(0, 6))
+
+        # ARMATURA: loader CSV (ale bez automatycznego obliczania)
+        self._add_loader(tab, on_success=None)
+
+        # Jeśli dane są już wczytane, oblicz od razu statystyki
+        if self.df is not None:
+            self._calculate_numeric_stats()
+
+    def _calculate_numeric_stats(self):
+        """Oblicza i wyświetla statystyki liczbowe dla wszystkich kolumn numerycznych"""
+        if self.df is None:
+            messagebox.showwarning("Uwaga", "Najpierw wczytaj plik CSV.")
+            return
+
+        self._set_busy("Obliczanie statystyk...")
+        try:
+            # Przekazujemy dataframe do funkcji analizującej
+            _, wyniki = analizuj_dane_numeryczne(self.df)
 
             # Odśwież Treeview
-            for row in tree.get_children():
-                tree.delete(row)
+            self.stats_tree.delete(*self.stats_tree.get_children())
+            for kol, staty in wyniki.items():
+                self.stats_tree.insert("", "end", values=(
+                    kol,
+                    staty["średnia"],
+                    staty["mediana"],
+                    staty["min"],
+                    staty["max"],
+                    staty["odchylenie_std"],
+                    staty["liczba_wartości"]
+                ))
+
+            if not wyniki:
+                messagebox.showinfo("Informacja", "Brak kolumn numerycznych do analizy.")
+        except Exception as e:
+            messagebox.showerror("Błąd", f"Wystąpił problem podczas obliczania statystyk: {str(e)}")
+        finally:
+            self._set_ready()
+
+    def _calculate_and_display_stats(self, df):
+        """Oblicza i wyświetla statystyki liczbowe dla wszystkich kolumn numerycznych"""
+        if df is None:
+            return
+
+        # Uzyskaj referencję do drzewa statystyk
+        tree = None
+        for child in self.nb.winfo_children():
+            if self.nb.tab(child, "text") == "Statystyki liczbowe":
+                # Znajdź drzewo w zakładce
+                for widget in child.winfo_children():
+                    if isinstance(widget, ttk.Treeview):
+                        tree = widget
+                        break
+                break
+
+        if tree is None:
+            return
+
+        self._set_busy("Obliczanie statystyk...")
+        try:
+            # Przekazujemy dataframe do funkcji analizującej
+            _, wyniki = analizuj_dane_numeryczne(df)
+
+            # Odśwież Treeview
+            tree.delete(*tree.get_children())
             for kol, staty in wyniki.items():
                 tree.insert("", "end", values=(
                     kol,
@@ -1274,11 +1316,12 @@ class MainApp(tk.Tk):
                     staty["liczba_wartości"]
                 ))
 
-        ttk.Button(tab, text="Oblicz statystyki", command=run) \
-            .pack(anchor="w", padx=10, pady=(0, 6))
-
-        # ========== ARMATURA: loader CSV (tylko do odświeżenia listy) ==========
-        self._add_loader(tab, on_success=update_selector)
+            if not wyniki:
+                messagebox.showinfo("Informacja", "Brak kolumn numerycznych do analizy.")
+        except Exception as e:
+            messagebox.showerror("Błąd", f"Wystąpił problem podczas obliczania statystyk: {str(e)}")
+        finally:
+            self._set_ready()
 
     def _build_non_numeric_stats_tab(self) -> None:
         """
@@ -1344,7 +1387,7 @@ class MainApp(tk.Tk):
 
         # Wybór metody
         method_var = tk.StringVar(value="pearson")
-        frm_select = ttk.Frame(tab);
+        frm_select = ttk.Frame(tab)
         frm_select.pack(anchor="w", padx=10, pady=(0, 8))
         ttk.Radiobutton(frm_select, text="Pearson", variable=method_var, value="pearson").pack(side="left")
         ttk.Radiobutton(frm_select, text="Spearman", variable=method_var, value="spearman").pack(side="left")
@@ -1353,38 +1396,52 @@ class MainApp(tk.Tk):
         tree, ybar, xbar = self._make_treeview(tab, cols=())
         tree.pack(fill="both", expand=True, padx=10, pady=5)
 
+        # Zapisz referencję do drzewa
+        self.corr_tree = tree
+
         def run_corr() -> None:
-            if not self.path:
+            if self.df is None:
                 messagebox.showwarning("Uwaga", "Najpierw wczytaj plik CSV.")
                 return
 
-            if method_var.get() == "pearson":
-                df_corr = oblicz_korelacje_pearsona(self.path)
-            else:
-                df_corr = oblicz_korelacje_spearmana(self.path)
+            self._set_busy("Obliczanie korelacji...")
+            try:
+                # Przekazujemy dataframe zamiast ścieżki do pliku
+                if method_var.get() == "pearson":
+                    df_corr = oblicz_korelacje_pearsona(self.df)
+                else:
+                    df_corr = oblicz_korelacje_spearmana(self.df)
 
-            if df_corr is None or df_corr.empty:
-                messagebox.showinfo("Info", "Brak danych numerycznych do korelacji.")
-                return
+                if df_corr is None or df_corr.empty:
+                    messagebox.showinfo("Info", "Brak danych numerycznych do korelacji.")
+                    return
 
-            # Konfiguracja kolumn w Treeview
-            cols = ("Variable", *df_corr.columns)
-            tree.config(columns=cols, show="headings")
-            tree.heading("Variable", text="Variable")
-            tree.column("Variable", width=130, anchor="w")
+                # Konfiguracja kolumn w Treeview
+                cols = ("Variable", *df_corr.columns)
+                tree.config(columns=cols, show="headings")
+                tree.heading("Variable", text="Variable")
+                tree.column("Variable", width=130, anchor="w")
 
-            for col in df_corr.columns:
-                tree.heading(col, text=col)
-                tree.column(col, width=90, anchor="center")
+                for col in df_corr.columns:
+                    tree.heading(col, text=col)
+                    tree.column(col, width=90, anchor="center")
 
-            # Wypełniamy wiersze
-            tree.delete(*tree.get_children())
-            for row_name, values in df_corr.iterrows():
-                tree.insert("", "end", values=(row_name, *np.round(values.values, 4)))
+                # Wypełniamy wiersze
+                tree.delete(*tree.get_children())
+                for row_name, values in df_corr.iterrows():
+                    tree.insert("", "end", values=(row_name, *np.round(values.values, 4)))
+            except Exception as e:
+                messagebox.showerror("Błąd", f"Wystąpił problem podczas obliczania korelacji: {str(e)}")
+            finally:
+                self._set_ready()
 
+        # DODANY PRZYCISK OBLICZANIA KORELACJI
         ttk.Button(tab, text="Oblicz korelacje", command=run_corr) \
             .pack(anchor="w", padx=10, pady=(0, 6))
 
+        # Automatyczne obliczenie korelacji, jeśli dane są już wczytane
+        if self.df is not None:
+            run_corr()
     def _build_visualization_tab(self) -> None:
         """
         Zakładka "Wizualizacje" - ZMODYFIKOWANA WERSJA bez sekcji historii

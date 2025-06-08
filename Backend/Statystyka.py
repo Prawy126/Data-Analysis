@@ -69,8 +69,7 @@ def znajdz_kolumny_numeryczne(df: pd.DataFrame) -> List[str]:
     return kolumny_numeryczne
 
 
-def wydobadz_wartosci_numeryczne(df: pd.DataFrame, wybrane_kolumny: Optional[List[str]] = None) -> Dict[
-    str, np.ndarray]:
+def wydobadz_wartosci_numeryczne(df: pd.DataFrame, wybrane_kolumny: Optional[List[str]] = None) -> Dict[str, np.ndarray]:
     """
     Wydobywa wartości numeryczne z wybranych kolumn DataFrame.
 
@@ -91,13 +90,14 @@ def wydobadz_wartosci_numeryczne(df: pd.DataFrame, wybrane_kolumny: Optional[Lis
     if wybrane_kolumny is None:
         kolumny_do_analizy = znajdz_kolumny_numeryczne(df)
     else:
-        kolumny_do_analizy = [k for k in wybrane_kolumny if k in df.columns]
-
-        # Sprawdź czy wszystkie wybrane kolumny istnieją i są numeryczne
-        for kolumna in kolumny_do_analizy:
-            if not pd.api.types.is_numeric_dtype(df[kolumna]):
-                print(f"[UWAGA] Kolumna {kolumna} nie jest numeryczna - zostanie pominięta.")
-                kolumny_do_analizy.remove(kolumna)
+        # Filtrujemy tylko kolumny numeryczne z wybranych
+        kolumny_do_analizy = []
+        for kolumna in wybrane_kolumny:
+            if kolumna in df.columns:
+                if pd.api.types.is_numeric_dtype(df[kolumna]):
+                    kolumny_do_analizy.append(kolumna)
+                else:
+                    print(f"[UWAGA] Kolumna {kolumna} nie jest numeryczna - zostanie pominięta.")
 
     for kolumna in kolumny_do_analizy:
         wartosci = df[kolumna].dropna().values
@@ -106,9 +106,8 @@ def wydobadz_wartosci_numeryczne(df: pd.DataFrame, wybrane_kolumny: Optional[Lis
 
     return wartosci_numeryczne
 
-
 def analizuj_dane_numeryczne(
-        df: pd.DataFrame,
+        dane,
         wybrane_kolumny: Optional[List[str]] = None
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, Dict[str, float]]]:
     """
@@ -116,8 +115,8 @@ def analizuj_dane_numeryczne(
 
     Parametry:
     ---------
-    df : pd.DataFrame
-        DataFrame zawierający dane do analizy
+    dane : pd.DataFrame lub str
+        DataFrame zawierający dane do analizy lub ścieżka do pliku CSV
     wybrane_kolumny : Optional[List[str]], opcjonalnie
         Lista kolumn do analizy. Jeśli None, analizuje wszystkie kolumny numeryczne.
 
@@ -128,7 +127,19 @@ def analizuj_dane_numeryczne(
         - Słownik z wartościami numerycznymi dla każdej kolumny
         - Słownik ze statystykami dla każdej kolumny
     """
-    print("\n[INFO] Rozpoczynam analizę danych numerycznych...")
+    # Sprawdź czy dane to ścieżka do pliku i wczytaj jeśli tak
+    if isinstance(dane, str):
+        sciezka_pliku = dane
+        nazwa_pliku = os.path.basename(sciezka_pliku)
+        print(f"\n[INFO] Rozpoczynam analizę danych numerycznych z pliku {nazwa_pliku}...")
+        df = wczytaj_csv(sciezka_pliku, separator=None, wyswietlaj_informacje=True)
+        if df is None:
+            print("[BŁĄD] Nie udało się wczytać pliku.")
+            return {}, {}
+    else:
+        # Jeśli dane to DataFrame
+        df = dane
+        print("\n[INFO] Rozpoczynam analizę danych numerycznych...")
 
     if not isinstance(df, pd.DataFrame) or df.empty:
         print("[BŁĄD] Przekazano pusty DataFrame lub obiekt nie jest DataFrame.")
@@ -152,8 +163,6 @@ def analizuj_dane_numeryczne(
             print(f"  - {nazwa_stat}: {wartosc}")
 
     return wartosci_numeryczne, statystyki
-
-
 def analizuj_dane_numeryczne(
         df: pd.DataFrame,
         wybrane_kolumny: Optional[List[str]] = None
