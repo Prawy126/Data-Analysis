@@ -1414,7 +1414,7 @@ class MainApp(tk.Tk):
         Po wczytaniu CSV musi odświeżyć tabelę kolumn nieliczących.
         """
         tab = ttk.Frame(self.nb)
-        self.nb.add(tab, text="Statystyki nieliczone")
+        self.nb.add(tab, text="Statystyki nieliczbowe")
 
         # ARMATURA: loader CSV do odświeżenia (wywoła self._update_all_columns)
         self._add_loader(tab, on_success=self._update_all_columns)
@@ -1430,7 +1430,7 @@ class MainApp(tk.Tk):
         tree.pack(fill="both", expand=True, padx=10, pady=5)
 
         # Przycisk analizy
-        ttk.Button(tab, text="Oblicz statystyki nieliczone",
+        ttk.Button(tab, text="Oblicz statystyki nieliczbowe",
                    command=lambda: self._run_non_numeric_stats(tree)) \
             .pack(anchor="w", padx=10, pady=(0, 6))
 
@@ -1644,7 +1644,7 @@ class MainApp(tk.Tk):
         button_frame = ttk.Frame(control_frame)
         button_frame.pack(fill="x", pady=10, padx=5)
 
-        self.generate_btn = ttk.Button(button_frame, text="🎯 GENERUJ WYKRES",
+        self.generate_btn = ttk.Button(button_frame, text="GENERUJ WYKRES",
                                        command=self._generate_plot_enhanced,
                                        style="Accent.TButton")
         self.generate_btn.pack(fill="x", ipady=5)  # Większy przycisk
@@ -1834,9 +1834,7 @@ class MainApp(tk.Tk):
         needs_x = chart_type in ("scatter", "line", "bar", "pie")  # Wszystkie potrzebują X
         needs_y = chart_type in ("scatter", "line")  # Tylko scatter i line zawsze potrzebują Y
         optional_y = chart_type in ("bar")  # Bar może, ale nie musi mieć Y
-
-        # Pole Kolor tylko dla scatter i line, a nie dla bar (usunięte dla wykresu słupkowego)
-        needs_hue = chart_type in ("scatter", "line")
+        needs_hue = chart_type in ("scatter", "line")  # Pole Kolor tylko dla scatter i line
 
         self._set_combo_state(self.x_col, needs_x)
 
@@ -1858,18 +1856,8 @@ class MainApp(tk.Tk):
         if not hasattr(self, "_chart_vars"):
             self._chart_vars = {}
 
-        # Dodatkowe opcje specyficzne dla typów wykresów
-        if chart_type in ("scatter", "line"):
-            self._chart_vars["regline"] = tk.BooleanVar(value=False)
-            ttk.Checkbutton(self.options_frame, text="Linia regresji",
-                            variable=self._chart_vars["regline"]).pack(anchor="w")
-
+        # Dodaj informację o trybach pracy dla Bar
         if chart_type == "bar":
-            self._chart_vars["sort_values"] = tk.BooleanVar(value=True)
-            ttk.Checkbutton(self.options_frame, text="Sortuj wartości",
-                            variable=self._chart_vars["sort_values"]).pack(anchor="w")
-
-            # Dodaj informację o dwóch trybach dla Bar
             ttk.Label(self.options_frame, text="Bar - tryby pracy:",
                       font=("Arial", 9, "bold")).pack(anchor="w", pady=(5, 0))
             ttk.Label(self.options_frame,
@@ -1889,16 +1877,19 @@ class MainApp(tk.Tk):
             self._chart_vars["min_procent"] = tk.DoubleVar(value=1.0)
             ttk.Spinbox(self.options_frame, from_=0.1, to=100.0, increment=0.1,
                         textvariable=self._chart_vars["min_procent"]).pack(anchor="w")
+
             style_frame = ttk.Frame(self.options_frame)
             style_frame.pack(fill="x", pady=2)
 
             self._chart_vars["pie_style"] = tk.StringVar(value="full")
             ttk.Radiobutton(style_frame, text="Pełny krąg",
-                            variable=self._chart_vars["pie_style"], value="full").pack(side="left")
+                            variable=self._chart_vars["pie_style"],
+                            value="full").pack(side="left")
             ttk.Radiobutton(style_frame, text="Pączek",
-                            variable=self._chart_vars["pie_style"], value="donut").pack(side="left")
+                            variable=self._chart_vars["pie_style"],
+                            value="donut").pack(side="left")
 
-            # NOWA OPCJA: Pokazuj procenty
+            # Opcja pokazywania procentów
             self._chart_vars["show_percentages"] = tk.BooleanVar(value=True)
             ttk.Checkbutton(self.options_frame, text="Pokaż procenty",
                             variable=self._chart_vars["show_percentages"]).pack(anchor="w")
@@ -1936,17 +1927,11 @@ class MainApp(tk.Tk):
                 "nazwa_wykresu": self.chart_title.get() or None,
                 "etykieta_x": self.x_label.get() or None,
                 "etykieta_y": self.y_label.get() or None,
-                "regline": False,
-                "sort_values": False,
                 "maks_kategorie": 8,
                 "min_procent": 1.0,
                 "fig": self.figure,
                 "ax": ax
             }
-            if hasattr(self, '_chart_vars'):
-                for key, var in self._chart_vars.items():
-                    if isinstance(var, (tk.BooleanVar, tk.IntVar, tk.DoubleVar)):
-                        params[key] = var.get()
 
             rysuj_wykres(**params)
             self.canvas.draw()
