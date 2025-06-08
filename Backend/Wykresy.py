@@ -2,8 +2,11 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib.widgets import Button
+import matplotlib.patches as patches
 
 from Dane.Dane import wczytaj_csv
+
 
 def rysuj_wykres(
         df: pd.DataFrame,
@@ -30,8 +33,11 @@ def rysuj_wykres(
         sort_values: bool = True,
         descending: bool = True,
         marker: str = "o",
-        fig=None,  # Dodany parametr dla istniejącej figury
-        ax=None  # Dodany parametr dla istniejącej osi
+        fig=None,
+        ax=None,
+        show_percentages: bool = True,
+        pie_style: str = "full",
+        **kwargs
 ) -> None:
     """
     Uniwersalna funkcja do rysowania różnych typów wykresów.
@@ -102,14 +108,15 @@ def rysuj_wykres(
         ax.set_xlabel(etykieta_x or kolumna_x)
         ax.set_ylabel(etykieta_y or kolumna_y)
 
-    # Pie
+    # Pie - POPRAWIONA WERSJA
     elif typ_wykresu == "pie":
         if kolumna_x is None:
-            raise ValueError("Dla pie wymagane jest podanie kolumny x.")
+            raise ValueError("Dla pie wykresu wymagane jest podanie kolumny x.")
+
         dane = df[kolumna_x].dropna()
         pct = dane.value_counts(normalize=True) * 100
 
-        # grupowanie
+        # Grupowanie i obsługa dużej liczby kategorii
         if len(pct) > maks_kategorie:
             top = pct.head(maks_kategorie - 1)
             other = pct.iloc[maks_kategorie - 1:].sum()
@@ -121,43 +128,292 @@ def rysuj_wykres(
 
         labels = pct.index.tolist()
         sizes = pct.values.tolist()
-        explode = [0.05] * len(sizes)
-        explode[sizes.index(max(sizes))] = 0.15 if len(sizes) > 1 else 0
+        counts = [len(dane[dane == label]) if label != "Inne" else
+                  len(dane) - sum([len(dane[dane == l]) for l in labels[:-1]])
+                  for label in labels]
 
-        ax.clear()  # Wyczyść oś przed rysowaniem wykresu kołowego
+        # KONTRASTOWE KOLORY
+        if palette == "pastel":
+            colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57',
+                      '#FF9FF3', '#54A0FF', '#5F27CD', '#00D2D3', '#FF9F43',
+                      '#FD79A8', '#A29BFE', '#6C5CE7', '#74B9FF', '#00B894']
+        else:
+            colors = sns.color_palette(palette, n_colors=len(sizes))
 
-        # Poprawiono obsługę wartości zwracanych przez ax.pie
-        wedges = ax.pie(
+        # Explode
+        explode = [0.02] * len(sizes)
+        if len(sizes) > 1:
+            max_idx = sizes.index(max(sizes))
+            explode[max_idx] = 0.08
+
+        ax.clear()
+
+        # GŁÓWNY WYKRES KOŁOWY
+        wedges, texts, autotexts = ax.pie(
             sizes,
-            labels=None,  # Usunięto etykiety z wykresu
-            autopct=None,  # Usunięto procentowe podpisy z wykresu
+            labels=None,
+            autopct=lambda pct: f'{pct:.1f}%' if show_percentages and pct > 2 else '',
             startangle=90,
             explode=explode,
-            colors=sns.color_palette(palette, n_colors=len(sizes)),
-            wedgeprops=dict(width=0.4, edgecolor='white')  # Dodano biały kontur dla lepszego wyglądu
-        )[0]  # Pobieramy tylko pierwszy element (wedges)
+            colors=colors[:len(sizes)],
+            wedgeprops=dict(width=1.0 if pie_style == "full" else 0.4,
+                            edgecolor='white', linewidth=3),
+            textprops={'fontsize': 11, 'weight': 'bold', 'color': 'white'},
+            pctdistance=0.85,
+            shadow=True
+        )
 
         ax.axis('equal')
 
-        # Poprawiona legenda z lepszym formatowaniem
-        legend_labels = [f"{label} ({size:.1f}%)" for label, size in zip(labels, sizes)]
-        ax.legend(
-            wedges, legend_labels,
-            title="Kategorie",
-            loc="center left",
-            bbox_to_anchor=(1, 0, 0.5, 1),
-            frameon=True,  # Dodano ramkę dla lepszej czytelności
-            shadow=True  # Dodano cień dla lepszego wyglądu
-        )
+        # PEŁNA LEGENDA + INTERAKTYWNOŚĆ
+        _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colors, dane)
 
     else:
         raise ValueError(f"Nieznany typ wykresu: {typ_wykresu}")
 
     # Ustaw tytuł wykresu
     if nazwa_wykresu:
-        ax.set_title(nazwa_wykresu)
+        ax.set_title(nazwa_wykresu, fontsize=16, pad=20, weight='bold')
+    elif typ_wykresu == "pie" and kolumna_x:
+        ax.set_title(f"Rozkład: {kolumna_x}", fontsize=16, pad=20, weight='bold')
 
     # Dopasuj układ wykresu
     fig.tight_layout()
 
-    return fig, ax  # Zwróć figurę i oś dla dalszych modyfikacji
+    return fig, ax
+
+
+def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colors, dane):
+    """
+    Tworzy PEŁNĄ legendę z interaktywnością i scrollowaniem
+    """
+    total_items = len(labels)
+    max_visible = 10  # Maksymalna liczba widocznych elementów
+
+    # Stan legendy
+    legend_state = {
+        'scroll_position': 0,
+        'highlighted_wedge': None,
+        'original_colors': [w.get_facecolor() for w in wedges],
+        'legend_obj': None,
+        'info_text': None,
+        'hover_text': None
+    }
+
+    def create_legend_labels():
+        """Tworzy etykiety dla legendy"""
+        legend_labels = []
+        for i, (label, size, count) in enumerate(zip(labels, sizes, counts)):
+            # Skróć długie nazwy ale pokaż pełne info
+            display_label = label if len(str(label)) <= 15 else str(label)[:12] + "..."
+            legend_labels.append(f"{display_label} ({size:.1f}% • {count:,})")
+        return legend_labels
+
+    def update_legend():
+        """Aktualizuje pełną legendę"""
+        # Usuń poprzednią legendę
+        if legend_state['legend_obj']:
+            legend_state['legend_obj'].remove()
+
+        # Usuń poprzedni tekst info
+        if legend_state['info_text']:
+            legend_state['info_text'].remove()
+
+        # Jeśli mało elementów - pokaż wszystkie
+        if total_items <= max_visible:
+            visible_wedges = wedges
+            visible_labels = create_legend_labels()
+            scroll_info = f"Wszystkie {total_items} kategorii"
+        else:
+            # Pokaż fragment z scrollowaniem
+            start_idx = legend_state['scroll_position']
+            end_idx = min(start_idx + max_visible, total_items)
+
+            visible_wedges = wedges[start_idx:end_idx]
+            all_labels = create_legend_labels()
+            visible_labels = all_labels[start_idx:end_idx]
+            scroll_info = f"Pozycja {start_idx + 1}-{end_idx} z {total_items}"
+
+        # Utwórz legendę - POPRAWIONA wersja bez title_fontweight
+        legend = ax.legend(
+            visible_wedges, visible_labels,
+            title="Kategorie (kliknij aby podświetlić)",
+            loc="center left",
+            bbox_to_anchor=(1.05, 0.5),
+            frameon=True,
+            shadow=True,
+            fontsize=9,
+            title_fontsize=10,
+            # title_fontweight='bold'  ← USUNIĘTE - powodowało błąd
+        )
+
+        # Stylizuj legendę
+        legend.get_frame().set_facecolor('#f8f9fa')
+        legend.get_frame().set_alpha(0.95)
+        legend.get_frame().set_edgecolor('#dee2e6')
+        legend.get_frame().set_linewidth(1)
+
+        # Pogrub tytuł legendy ręcznie
+        legend.get_title().set_fontweight('bold')
+
+        legend_state['legend_obj'] = legend
+
+        # Dodaj info o scrollowaniu
+        legend_state['info_text'] = fig.text(0.85, 0.12, scroll_info,
+                                             fontsize=8, ha='center',
+                                             style='italic', color='gray')
+
+        # Dodaj interaktywność do tekstów legendy
+        for i, legend_text in enumerate(legend.get_texts()):
+            legend_text.set_picker(True)
+            # Zapisz indeks w globalnej tablicy
+            actual_idx = legend_state['scroll_position'] + i if total_items > max_visible else i
+            legend_text.wedge_index = actual_idx
+
+        # Dodaj przyciski scrollowania jeśli potrzebne
+        if total_items > max_visible:
+            _add_scroll_buttons(fig, legend_state, update_legend)
+
+    def highlight_wedge(wedge_idx, highlight=True):
+        """Podświetla kawałek wykresu"""
+        if wedge_idx >= len(wedges):
+            return
+
+        wedge = wedges[wedge_idx]
+
+        if highlight:
+            # Podświetl wybrany kawałek
+            wedge.set_edgecolor('#000000')  # Czarna ramka
+            wedge.set_linewidth(5)
+            wedge.set_alpha(0.9)
+
+            # Przytmij pozostałe
+            for i, other_wedge in enumerate(wedges):
+                if i != wedge_idx:
+                    other_wedge.set_alpha(0.3)
+
+            # Pokaż szczegółowe info w tytule - CZARNY TEKST
+            label = labels[wedge_idx]
+            size = sizes[wedge_idx]
+            count = counts[wedge_idx]
+            percentage_of_total = count / len(dane) * 100
+
+            ax.set_title(f" {label}\n{size:.1f}% • {count:,} rekordów • {percentage_of_total:.2f}% wszystkich danych",
+                         fontsize=14, pad=25, weight='bold', color='#000000')  # CZARNY kolor
+
+        else:
+            # Przywróć normalny wygląd
+            wedge.set_edgecolor('white')
+            wedge.set_linewidth(3)
+            wedge.set_alpha(1.0)
+
+            # Przywróć wszystkie kawałki
+            for other_wedge in wedges:
+                other_wedge.set_alpha(1.0)
+
+            # Przywróć oryginalny tytuł
+            original_title = ax.get_title().split('\n')[0] if '\n' in ax.get_title() else ax.get_title()
+            ax.set_title(original_title, fontsize=16, pad=20, weight='bold', color='black')
+
+        fig.canvas.draw_idle()
+
+    def on_pick(event):
+        """Obsługa kliknięcia w legendę"""
+        if hasattr(event.artist, 'wedge_index'):
+            wedge_idx = event.artist.wedge_index
+
+            # Toggle highlight
+            if legend_state['highlighted_wedge'] == wedge_idx:
+                highlight_wedge(wedge_idx, False)
+                legend_state['highlighted_wedge'] = None
+            else:
+                # Usuń poprzednie podświetlenie
+                if legend_state['highlighted_wedge'] is not None:
+                    highlight_wedge(legend_state['highlighted_wedge'], False)
+
+                # Dodaj nowe podświetlenie
+                highlight_wedge(wedge_idx, True)
+                legend_state['highlighted_wedge'] = wedge_idx
+
+    def on_hover(event):
+        """Obsługa najechania myszką - CIEMNY TEKST"""
+        if event.inaxes == ax:
+            # Usuń poprzedni hover text
+            if legend_state['hover_text']:
+                legend_state['hover_text'].remove()
+                legend_state['hover_text'] = None
+
+            # Sprawdź czy najechaano na kawałek wykresu
+            for i, wedge in enumerate(wedges):
+                if wedge.contains_point([event.x, event.y]):
+                    if legend_state['highlighted_wedge'] != i:
+                        # Lekkie podświetlenie przy hover
+                        wedge.set_edgecolor('#333333')  # Ciemno szary
+                        wedge.set_linewidth(4)
+
+                        # Pokaż tooltip - CZARNY TEKST
+                        label = labels[i]
+                        size = sizes[i]
+                        count = counts[i]
+
+                        # Tekst na dole wykresu - CZARNY i większy
+                        legend_state['hover_text'] = fig.text(0.5, 0.02,
+                                                              f" {label}: {size:.1f}% ({count:,} rekordów)",
+                                                              ha='center', fontsize=12,
+                                                              weight='bold', color='#000000',  # CZARNY
+                                                              bbox=dict(boxstyle="round,pad=0.3",
+                                                                        facecolor='#FFFF99', alpha=0.8))
+
+                        fig.canvas.draw_idle()
+                    break
+            else:
+                # Nie ma hover - przywróć normalny wygląd
+                for i, wedge in enumerate(wedges):
+                    if legend_state['highlighted_wedge'] != i:
+                        wedge.set_edgecolor('white')
+                        wedge.set_linewidth(3)
+
+                fig.canvas.draw_idle()
+
+    # Podłącz eventy
+    fig.canvas.mpl_connect('pick_event', on_pick)
+    fig.canvas.mpl_connect('motion_notify_event', on_hover)
+
+    # Inicjalne utworzenie legendy
+    update_legend()
+
+
+def _add_scroll_buttons(fig, legend_state, update_callback):
+    """Dodaje przyciski przewijania"""
+    max_visible = 10
+    total_items = len(legend_state['original_colors'])
+
+    if total_items <= max_visible:
+        return
+
+    # Przyciski przewijania
+    button_size = 0.025
+
+    # Przycisk "w górę"
+    ax_up = plt.axes([0.88, 0.7, button_size, button_size])
+    ax_up.set_facecolor('#e8f4fd')
+    button_up = Button(ax_up, '▲', color='#4CAF50', hovercolor='#45a049')
+
+    # Przycisk "w dół"
+    ax_down = plt.axes([0.88, 0.3, button_size, button_size])
+    ax_down.set_facecolor('#e8f4fd')
+    button_down = Button(ax_down, '▼', color='#f44336', hovercolor='#da190b')
+
+    def scroll_up(event):
+        if legend_state['scroll_position'] > 0:
+            legend_state['scroll_position'] -= 1
+            update_callback()
+
+    def scroll_down(event):
+        max_scroll = max(0, total_items - max_visible)
+        if legend_state['scroll_position'] < max_scroll:
+            legend_state['scroll_position'] += 1
+            update_callback()
+
+    button_up.on_clicked(scroll_up)
+    button_down.on_clicked(scroll_down)

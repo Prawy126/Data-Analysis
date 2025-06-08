@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
-
+from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
 from Backend.AI import RANDOM_SEED, classify_and_return_predictions, cluster_kmeans
 from Backend.Czyszczenie import ekstrakcja_podtablicy
 from Backend.Duplikaty import usun_duplikaty
@@ -74,6 +74,20 @@ class MainApp(tk.Tk):
         self.current_page = 0  # numer strony (0-indeks)
         self._pagination_df_id = None  # identyfikacja DataFrame dla paginacji
 
+        # Dodaj style dla przycisków
+        style = ttk.Style()
+
+        # Styl dla głównego przycisku
+        style.configure('Accent.TButton',
+                        font=('Arial', 9, 'bold'),
+                        foreground='white')
+
+        # Próba ustawienia tła (może nie działać na wszystkich systemach)
+        try:
+            style.map('Accent.TButton',
+                      background=[('active', '#0066CC'), ('!active', '#0080FF')])
+        except:
+            pass
         # Załaduj pierwszą zakładkę
         self._load_pre()
 
@@ -1373,65 +1387,313 @@ class MainApp(tk.Tk):
 
     def _build_visualization_tab(self) -> None:
         """
-        Zakładka "Wizualizacje": pozwala wybrać typ wykresu, kolumny X/Y, opcje
-        (regresja, sortowanie, limity w pie, itp.) i narysować wykres w polu obok.
+        Zakładka "Wizualizacje" - POPRAWIONA WERSJA z przewijaniem
         """
         tab = ttk.Frame(self.nb)
         self.nb.add(tab, text="Wizualizacje")
 
-        # ARMATURA: loader CSV (globalny refresh kolumn)
+        # ARMATURA: loader CSV
         self._add_loader(tab, on_success=self._update_visualization_columns)
 
         # Główny układ: lewa część = panel kontroli, prawa część = kanwa wykresu
-        main_frame = ttk.Frame(tab);
+        main_frame = ttk.Frame(tab)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # ────── panel kontrolny ──────
-        control_frame = ttk.Frame(main_frame);
-        control_frame.pack(side="left", fill="y", padx=10)
+        # ────── PANEL KONTROLNY Z PRZEWIJANIEM ──────
+        # Kontener dla panelu kontrolnego
+        control_container = ttk.Frame(main_frame)
+        control_container.pack(side="left", fill="y", padx=(0, 10))
 
-        ttk.Label(control_frame, text="Typ wykresu:").pack(anchor="w")
-        self.chart_type = ttk.Combobox(control_frame, state="readonly",
+        # Canvas z scrollbarem dla panelu kontrolnego
+        control_canvas = tk.Canvas(control_container, width=280, highlightthickness=0)
+        control_scrollbar = ttk.Scrollbar(control_container, orient="vertical", command=control_canvas.yview)
+        control_frame = ttk.Frame(control_canvas)
+
+        # Konfiguracja przewijania
+        control_frame.bind(
+            "<Configure>",
+            lambda e: control_canvas.configure(scrollregion=control_canvas.bbox("all"))
+        )
+
+        control_canvas.create_window((0, 0), window=control_frame, anchor="nw")
+        control_canvas.configure(yscrollcommand=control_scrollbar.set)
+
+        # Pack canvas i scrollbar
+        control_canvas.pack(side="left", fill="both", expand=True)
+        control_scrollbar.pack(side="right", fill="y")
+
+        # Bind mousewheel to canvas
+        def _on_mousewheel(event):
+            control_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        control_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # ────── ZAWARTOŚĆ PANELU KONTROLNEGO ──────
+
+        # Nagłówek z przyciskami akcji
+        header_frame = ttk.Frame(control_frame)
+        header_frame.pack(fill="x", pady=(0, 10), padx=5)
+
+        ttk.Label(header_frame, text="Interaktywne Wykresy",
+                  font=("Arial", 10, "bold")).pack(anchor="w")
+
+        # Przyciski akcji
+        action_frame = ttk.Frame(header_frame)
+        action_frame.pack(fill="x", pady=5)
+
+        ttk.Button(action_frame, text="💾", width=4,
+                   command=self._save_current_chart).pack(side="left", padx=1)
+        ttk.Button(action_frame, text="⟲", width=4,
+                   command=self._refresh_current_chart).pack(side="left", padx=1)
+
+        # Separator
+        ttk.Separator(control_frame, orient="horizontal").pack(fill="x", pady=5, padx=5)
+
+        # ═══ SEKCJA PODSTAWOWA - KOMPAKTOWA ═══
+        basic_frame = ttk.LabelFrame(control_frame, text="Podstawowe", padding=8)
+        basic_frame.pack(fill="x", pady=3, padx=5)
+
+        # Typ wykresu
+        ttk.Label(basic_frame, text="Typ:", font=("Arial", 8)).pack(anchor="w")
+        self.chart_type = ttk.Combobox(basic_frame, state="readonly", height=4,
                                        values=["scatter", "line", "bar", "pie"])
         self.chart_type.set("scatter")
-        self.chart_type.pack(fill="x", pady=5)
+        self.chart_type.pack(fill="x", pady=1)
         self.chart_type.bind("<<ComboboxSelected>>", self._update_chart_options)
 
-        ttk.Label(control_frame, text="Kolumna X:").pack(anchor="w")
-        self.x_col = ttk.Combobox(control_frame, state="readonly")
-        self.x_col.pack(fill="x", pady=2)
+        # Kolumny - kompaktowo
+        for label, attr in [("X:", "x_col"), ("Y:", "y_col"), ("Kolor:", "hue_col")]:
+            ttk.Label(basic_frame, text=label, font=("Arial", 8)).pack(anchor="w", pady=(3, 0))
+            combo = ttk.Combobox(basic_frame, state="readonly", height=4)
+            combo.pack(fill="x", pady=1)
+            setattr(self, attr, combo)
 
-        ttk.Label(control_frame, text="Kolumna Y:").pack(anchor="w")
-        self.y_col = ttk.Combobox(control_frame, state="readonly")
-        self.y_col.pack(fill="x", pady=2)
+        # ═══ OPCJE ZAAWANSOWANE - KOMPAKTOWE ═══
+        self.options_frame = ttk.LabelFrame(control_frame, text="Opcje", padding=6)
+        self.options_frame.pack(fill="x", pady=3, padx=5)
 
-        ttk.Label(control_frame, text="Kolor (hue):").pack(anchor="w")
-        self.hue_col = ttk.Combobox(control_frame, state="readonly")
-        self.hue_col.pack(fill="x", pady=2)
+        # ═══ STYL - KOMPAKTOWY ═══
+        style_frame = ttk.LabelFrame(control_frame, text="Styl", padding=6)
+        style_frame.pack(fill="x", pady=3, padx=5)
 
-        self.options_frame = ttk.Frame(control_frame)
-        self.options_frame.pack(fill="x", pady=6)
+        # Paleta w jednej linii
+        palette_frame = ttk.Frame(style_frame)
+        palette_frame.pack(fill="x", pady=1)
+        ttk.Label(palette_frame, text="Paleta:", font=("Arial", 8), width=8).pack(side="left")
+        self.palette_var = tk.StringVar(value="pastel")
+        palette_combo = ttk.Combobox(palette_frame, textvariable=self.palette_var,
+                                     values=["pastel", "Set1", "Set2", "deep", "bright"],
+                                     state="readonly", width=10, height=4)
+        palette_combo.pack(side="right", fill="x", expand=True)
 
-        # Pola na tytuł i etykiety
-        for lbl, attr in [("Tytuł wykresu:", "chart_title"),
-                          ("Etykieta X:", "x_label"),
-                          ("Etykieta Y:", "y_label")]:
-            ttk.Label(control_frame, text=lbl).pack(anchor="w")
-            setattr(self, attr, ttk.Entry(control_frame))
-            getattr(self, attr).pack(fill="x", pady=2)
+        # ═══ ETYKIETY - KOMPAKTOWE ═══
+        labels_frame = ttk.LabelFrame(control_frame, text="Etykiety", padding=6)
+        labels_frame.pack(fill="x", pady=3, padx=5)
 
-        ttk.Button(control_frame, text="Generuj wykres", command=self._generate_plot) \
-            .pack(side="bottom", pady=10)
+        for lbl, attr in [("Tytuł:", "chart_title"), ("X:", "x_label"), ("Y:", "y_label")]:
+            frame = ttk.Frame(labels_frame)
+            frame.pack(fill="x", pady=1)
+            ttk.Label(frame, text=lbl, font=("Arial", 8), width=6).pack(side="left")
+            entry = ttk.Entry(frame, font=("Arial", 8))
+            entry.pack(side="right", fill="x", expand=True)
+            setattr(self, attr, entry)
 
-        # ────── obszar rysunku (kanwa Matplotlib) ──────
+        # ═══ HISTORIA - KOMPAKTOWA ═══
+        if not hasattr(self, 'chart_history'):
+            self.chart_history = []
+            self.current_chart_index = -1
+
+        history_frame = ttk.LabelFrame(control_frame, text="Historia", padding=6)
+        history_frame.pack(fill="x", pady=3, padx=5)
+
+        nav_frame = ttk.Frame(history_frame)
+        nav_frame.pack(fill="x")
+
+        self.prev_chart_btn = ttk.Button(nav_frame, text="◀", width=3,
+                                         command=self._prev_chart, state="disabled")
+        self.prev_chart_btn.pack(side="left")
+
+        self.next_chart_btn = ttk.Button(nav_frame, text="▶", width=3,
+                                         command=self._next_chart, state="disabled")
+        self.next_chart_btn.pack(side="left", padx=(2, 0))
+
+        self.chart_info_var = tk.StringVar(value="0/0")
+        ttk.Label(nav_frame, textvariable=self.chart_info_var,
+                  font=("Arial", 8)).pack(side="right")
+
+        # ═══ GŁÓWNY PRZYCISK - ZAWSZE WIDOCZNY ═══
+        button_frame = ttk.Frame(control_frame)
+        button_frame.pack(fill="x", pady=10, padx=5)
+
+        self.generate_btn = ttk.Button(button_frame, text="🎯 GENERUJ WYKRES",
+                                       command=self._generate_plot_enhanced,
+                                       style="Accent.TButton")
+        self.generate_btn.pack(fill="x", ipady=5)  # Większy przycisk
+
+        # Dodaj trochę miejsca na dole
+        ttk.Frame(control_frame, height=20).pack()
+
+        # ────── OBSZAR WYKRESU ──────
+        chart_frame = ttk.Frame(main_frame)
+        chart_frame.pack(side="right", fill="both", expand=True)
+
+        # Toolbar matplotlib
+        toolbar_frame = ttk.Frame(chart_frame)
+        toolbar_frame.pack(fill="x")
+
         self.figure = plt.figure(figsize=(8, 6))
-        self.canvas = FigureCanvasTkAgg(self.figure, master=main_frame)
-        self.canvas.get_tk_widget().pack(side="right", fill="both", expand=True)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=chart_frame)
 
-        # Po pierwszym uruchomieniu – jeśli self.df już istnieje, ustaw kolumny
+        # Dodaj toolbar
+        self.toolbar = NavigationToolbar2Tk(self.canvas, toolbar_frame)
+        self.toolbar.update()
+
+        self.canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        # Info o wykresie
+        self.chart_info_label_var = tk.StringVar(value="Gotowy do generowania")
+        info_label = ttk.Label(chart_frame, textvariable=self.chart_info_label_var,
+                               font=("Arial", 8), foreground="blue")
+        info_label.pack(anchor="w", padx=5, pady=2)
+
+        # Inicjalizacja
         if self.df is not None:
             self._update_visualization_columns(self.df)
         self._update_chart_options()
+
+    def _generate_plot_enhanced(self) -> None:
+        """Rozszerzona wersja generowania wykresów z historią"""
+        if self.df is None:
+            messagebox.showwarning("Błąd", "Najpierw wczytaj plik CSV!")
+            return
+
+        self._set_busy("Generowanie wykresu…")
+        try:
+            self.figure.clear()
+            ax = self.figure.add_subplot(111)
+
+            params = {
+                "df": self.df,
+                "typ_wykresu": self.chart_type.get(),
+                "kolumna_x": self.x_col.get() or None,
+                "kolumna_y": self.y_col.get() if self.chart_type.get() != "pie" else None,
+                "kolumna_hue": self.hue_col.get() if self.hue_col.get() not in ["", "brak"] else None,
+                "nazwa_wykresu": self.chart_title.get() or None,
+                "etykieta_x": self.x_label.get() or None,
+                "etykieta_y": self.y_label.get() or None,
+                "palette": getattr(self, 'palette_var', tk.StringVar(value="pastel")).get(),
+                "regline": False,
+                "sort_values": False,
+                "maks_kategorie": 8,
+                "min_procent": 1.0,
+                "fig": self.figure,
+                "ax": ax
+            }
+
+            # POPRAWKA: Filtruj tylko znane parametry
+            if hasattr(self, '_chart_vars'):
+                known_params = {'regline', 'sort_values', 'maks_kategorie', 'min_procent',
+                                'show_percentages', 'pie_style'}  # Dodaj inne znane parametry
+
+                for key, var in self._chart_vars.items():
+                    if key in known_params and isinstance(var, (tk.BooleanVar, tk.IntVar, tk.DoubleVar, tk.StringVar)):
+                        params[key] = var.get()
+
+            rysuj_wykres(**params)
+
+            # Dodaj do historii
+            self._add_chart_to_history(params.copy())
+
+            self.canvas.draw()
+
+            # Aktualizuj info
+            chart_type = params["typ_wykresu"]
+            info = f"Typ: {chart_type} | Rekordów: {len(self.df)}"
+            self.chart_info_label_var.set(info)
+
+        except Exception as e:
+            messagebox.showerror("Błąd", str(e))
+        finally:
+            self._set_ready()
+
+    def _add_chart_to_history(self, params):
+        """Dodaje wykres do historii"""
+        # Usuń przyszłe wykresy jeśli jesteśmy w środku historii
+        if self.current_chart_index < len(self.chart_history) - 1:
+            self.chart_history = self.chart_history[:self.current_chart_index + 1]
+
+        # Dodaj nowy wykres
+        self.chart_history.append(params)
+        self.current_chart_index = len(self.chart_history) - 1
+
+        # Ograniczenie do 5 wykresów
+        if len(self.chart_history) > 5:
+            self.chart_history.pop(0)
+            self.current_chart_index -= 1
+
+        self._update_history_buttons()
+
+    def _update_history_buttons(self):
+        """Aktualizuje przyciski historii"""
+        if not hasattr(self, 'prev_chart_btn'):
+            return
+
+        can_go_back = self.current_chart_index > 0
+        can_go_forward = self.current_chart_index < len(self.chart_history) - 1
+
+        self.prev_chart_btn.config(state="normal" if can_go_back else "disabled")
+        self.next_chart_btn.config(state="normal" if can_go_forward else "disabled")
+
+        total = len(self.chart_history)
+        current = self.current_chart_index + 1 if total > 0 else 0
+        self.chart_info_var.set(f"{current}/{total}")
+
+    def _prev_chart(self):
+        """Poprzedni wykres"""
+        if self.current_chart_index > 0:
+            self.current_chart_index -= 1
+            self._load_chart_from_history()
+
+    def _next_chart(self):
+        """Następny wykres"""
+        if self.current_chart_index < len(self.chart_history) - 1:
+            self.current_chart_index += 1
+            self._load_chart_from_history()
+
+    def _load_chart_from_history(self):
+        """Ładuje wykres z historii"""
+        if 0 <= self.current_chart_index < len(self.chart_history):
+            params = self.chart_history[self.current_chart_index]
+            try:
+                self.figure.clear()
+                rysuj_wykres(**params)
+                self.canvas.draw()
+                self._update_history_buttons()
+            except Exception as e:
+                messagebox.showerror("Błąd", f"Nie można załadować z historii:\n{str(e)}")
+
+    def _save_current_chart(self):
+        """Zapisuje obecny wykres"""
+        if not hasattr(self, 'chart_history') or not self.chart_history:
+            messagebox.showwarning("Brak wykresu", "Najpierw wygeneruj wykres!")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG files", "*.png"), ("PDF files", "*.pdf"), ("All files", "*.*")]
+        )
+
+        if file_path:
+            try:
+                self.figure.savefig(file_path, dpi=300, bbox_inches='tight')
+                messagebox.showinfo("Sukces", f"Wykres zapisany: {file_path}")
+            except Exception as e:
+                messagebox.showerror("Błąd", f"Nie można zapisać:\n{str(e)}")
+
+    def _refresh_current_chart(self):
+        """Odświeża obecny wykres"""
+        if hasattr(self, 'chart_history') and self.chart_history:
+            self._load_chart_from_history()
 
     def _update_chart_options(self, event=None) -> None:
         """Pokazuje tylko te opcje, które pasują do wybranego typu wykresu."""
@@ -1475,7 +1737,19 @@ class MainApp(tk.Tk):
             self._chart_vars["min_procent"] = tk.DoubleVar(value=1.0)
             ttk.Spinbox(self.options_frame, from_=0.1, to=100.0, increment=0.1,
                         textvariable=self._chart_vars["min_procent"]).pack(anchor="w")
+            style_frame = ttk.Frame(self.options_frame)
+            style_frame.pack(fill="x", pady=2)
 
+            self._chart_vars["pie_style"] = tk.StringVar(value="full")
+            ttk.Radiobutton(style_frame, text="Pełny krąg",
+                            variable=self._chart_vars["pie_style"], value="full").pack(side="left")
+            ttk.Radiobutton(style_frame, text="Pączek",
+                            variable=self._chart_vars["pie_style"], value="donut").pack(side="left")
+
+            # NOWA OPCJA: Pokazuj procenty
+            self._chart_vars["show_percentages"] = tk.BooleanVar(value=True)
+            ttk.Checkbutton(self.options_frame, text="Pokaż procenty",
+                            variable=self._chart_vars["show_percentages"]).pack(anchor="w")
     def _update_columns(self, df: pd.DataFrame) -> None:
         """Aktualizuje listy kolumn po wczytaniu danych"""
         cols = df.columns.tolist()
