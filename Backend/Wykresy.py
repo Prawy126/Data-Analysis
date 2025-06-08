@@ -38,11 +38,21 @@ def rysuj_wykres(
         show_percentages: bool = True,
         pie_style: str = "full",
         **kwargs
-) -> None:
+) -> tuple:
     """
     Uniwersalna funkcja do rysowania różnych typów wykresów.
-    """
 
+    Argumenty są elastycznie interpretowane w zależności od typu wykresu:
+
+    - scatter: wymaga kolumna_x i kolumna_y (punkty na płaszczyźnie)
+    - line: wymaga kolumna_x i kolumna_y (linia łącząca punkty)
+    - bar:
+        * jeśli podano kolumna_y: tradycyjny wykres słupkowy (x = kategorie, y = wartości)
+        * jeśli nie podano kolumna_y: wykres liczebności dla kolumna_x
+    - pie:
+        * wymaga tylko kolumna_x (zlicza wartości w tej kolumnie)
+        * nie używa kolumna_y w ogóle
+    """
     sns.set_theme(style=styl, palette=palette, context="notebook")
 
     # Jeśli nie podano figury, utwórz nową
@@ -55,7 +65,7 @@ def rysuj_wykres(
     # Wyczyść oś przed rysowaniem
     ax.clear()
 
-    # Scatter
+    # Scatter - potrzebuje kolumn X i Y
     if typ_wykresu == "scatter":
         if kolumna_x is None or kolumna_y is None:
             raise ValueError("Dla scatter wymagane są kolumny x i y.")
@@ -73,28 +83,65 @@ def rysuj_wykres(
         ax.set_xlabel(etykieta_x or kolumna_x)
         ax.set_ylabel(etykieta_y or kolumna_y)
 
-    # Bar
+    # Bar - elastyczny, działa na dwa sposoby
     elif typ_wykresu == "bar":
-        if kolumna_x is None or kolumna_y is None:
-            raise ValueError("Dla bar wymagane są kolumny x i y.")
+        if kolumna_x is None:
+            raise ValueError("Dla bar wymagane jest podanie kolumny x.")
+
         data = df.copy()
-        if sort_values:
-            data = data.sort_values(kolumna_y, ascending=not descending)
-        sns.barplot(
-            data=data,
-            x=kolumna_x if orient == "v" else kolumna_y,
-            y=kolumna_y if orient == "v" else kolumna_x,
-            orient=orient,
-            errorbar=None,
-            ax=ax
-        )
-        ax.set_xlabel(etykieta_x or kolumna_x)
-        ax.set_ylabel(etykieta_y or kolumna_y)
+
+        # Tryb 1: Tradycyjny - pokazuje kolumnę Y względem X
+        if kolumna_y is not None:
+            if sort_values:
+                data = data.sort_values(kolumna_y, ascending=not descending)
+            sns.barplot(
+                data=data,
+                x=kolumna_x if orient == "v" else kolumna_y,
+                y=kolumna_y if orient == "v" else kolumna_x,
+                orient=orient,
+                errorbar=None,
+                ax=ax,
+                hue=kolumna_hue
+            )
+            ax.set_xlabel(etykieta_x or kolumna_x)
+            ax.set_ylabel(etykieta_y or kolumna_y)
+
+        # Tryb 2: Zliczanie - pokazuje liczebności wartości w kolumnie X
+        else:
+            # Zlicz wartości w kolumnie X
+            counts = df[kolumna_x].value_counts()
+            if sort_values:
+                counts = counts.sort_values(ascending=not descending)
+
+            # Ogranicz liczbę kategorii jeśli trzeba
+            if len(counts) > maks_kategorie:
+                top_counts = counts.head(maks_kategorie - 1)
+                other_count = counts.iloc[maks_kategorie - 1:].sum()
+                counts = pd.concat([top_counts, pd.Series({"Inne": other_count})])
+
+            # Narysuj wykres
+            if orient == "v":
+                ax.bar(counts.index, counts.values, color=sns.color_palette(palette, n_colors=len(counts)))
+                ax.set_xlabel(etykieta_x or kolumna_x)
+                ax.set_ylabel(etykieta_y or "Liczebność")
+            else:
+                ax.barh(counts.index, counts.values, color=sns.color_palette(palette, n_colors=len(counts)))
+                ax.set_xlabel(etykieta_x or "Liczebność")
+                ax.set_ylabel(etykieta_y or kolumna_x)
+
+            # Dodaj etykiety wartości na słupkach
+            for i, v in enumerate(counts.values):
+                if orient == "v":
+                    ax.text(i, v, f"{v}", ha='center', va='bottom')
+                else:
+                    ax.text(v, i, f"{v}", ha='left', va='center')
+
+        # Rotacja etykiet
         for lbl in ax.get_xticklabels():
             lbl.set_rotation(45)
             lbl.set_ha('right')
 
-    # Line
+    # Line - potrzebuje kolumn X i Y
     elif typ_wykresu == "line":
         if kolumna_x is None or kolumna_y is None:
             raise ValueError("Dla line wymagane są kolumny x i y.")
@@ -103,12 +150,13 @@ def rysuj_wykres(
             hue=kolumna_hue, marker=marker, ax=ax
         )
         if fill_between:
-            ax.fill_between(df[kolumna_x], df[kolumna_y], alpha=0.15)
+            if kolumna_hue is None:
+                ax.fill_between(df[kolumna_x], df[kolumna_y], alpha=0.15)
         ax.grid(True)
         ax.set_xlabel(etykieta_x or kolumna_x)
         ax.set_ylabel(etykieta_y or kolumna_y)
 
-    # Pie - POPRAWIONA WERSJA
+    # Pie - potrzebuje tylko kolumny X (liczy wartości)
     elif typ_wykresu == "pie":
         if kolumna_x is None:
             raise ValueError("Dla pie wykresu wymagane jest podanie kolumny x.")

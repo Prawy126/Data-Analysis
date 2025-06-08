@@ -1387,7 +1387,7 @@ class MainApp(tk.Tk):
 
     def _build_visualization_tab(self) -> None:
         """
-        Zakładka "Wizualizacje" - POPRAWIONA WERSJA z przewijaniem
+        Zakładka "Wizualizacje" - ZMODYFIKOWANA WERSJA bez sekcji historii
         """
         tab = ttk.Frame(self.nb)
         self.nb.add(tab, text="Wizualizacje")
@@ -1498,29 +1498,6 @@ class MainApp(tk.Tk):
             entry.pack(side="right", fill="x", expand=True)
             setattr(self, attr, entry)
 
-        # ═══ HISTORIA - KOMPAKTOWA ═══
-        if not hasattr(self, 'chart_history'):
-            self.chart_history = []
-            self.current_chart_index = -1
-
-        history_frame = ttk.LabelFrame(control_frame, text="Historia", padding=6)
-        history_frame.pack(fill="x", pady=3, padx=5)
-
-        nav_frame = ttk.Frame(history_frame)
-        nav_frame.pack(fill="x")
-
-        self.prev_chart_btn = ttk.Button(nav_frame, text="◀", width=3,
-                                         command=self._prev_chart, state="disabled")
-        self.prev_chart_btn.pack(side="left")
-
-        self.next_chart_btn = ttk.Button(nav_frame, text="▶", width=3,
-                                         command=self._next_chart, state="disabled")
-        self.next_chart_btn.pack(side="left", padx=(2, 0))
-
-        self.chart_info_var = tk.StringVar(value="0/0")
-        ttk.Label(nav_frame, textvariable=self.chart_info_var,
-                  font=("Arial", 8)).pack(side="right")
-
         # ═══ GŁÓWNY PRZYCISK - ZAWSZE WIDOCZNY ═══
         button_frame = ttk.Frame(control_frame)
         button_frame.pack(fill="x", pady=10, padx=5)
@@ -1572,28 +1549,36 @@ class MainApp(tk.Tk):
             self.figure.clear()
             ax = self.figure.add_subplot(111)
 
+            # Podstawowe parametry
             params = {
                 "df": self.df,
                 "typ_wykresu": self.chart_type.get(),
                 "kolumna_x": self.x_col.get() or None,
-                "kolumna_y": self.y_col.get() if self.chart_type.get() != "pie" else None,
-                "kolumna_hue": self.hue_col.get() if self.hue_col.get() not in ["", "brak"] else None,
                 "nazwa_wykresu": self.chart_title.get() or None,
                 "etykieta_x": self.x_label.get() or None,
                 "etykieta_y": self.y_label.get() or None,
                 "palette": getattr(self, 'palette_var', tk.StringVar(value="pastel")).get(),
-                "regline": False,
-                "sort_values": False,
-                "maks_kategorie": 8,
-                "min_procent": 1.0,
                 "fig": self.figure,
                 "ax": ax
             }
 
-            # POPRAWKA: Filtruj tylko znane parametry
+            # Kolumna Y tylko jeśli została wybrana lub jest wymagana
+            chart_type = self.chart_type.get()
+            if chart_type != "pie":  # Pie nigdy nie używa Y
+                y_value = self.y_col.get()
+                if y_value:  # Dodaj tylko jeśli Y jest wybrane
+                    params["kolumna_y"] = y_value
+
+            # Kolumna hue - tylko dla obsługiwanych typów i gdy wybrano wartość
+            if chart_type in ("scatter", "line", "bar"):
+                hue_value = self.hue_col.get()
+                if hue_value and hue_value != "brak":
+                    params["kolumna_hue"] = hue_value
+
+            # Dodatkowe parametry z _chart_vars
             if hasattr(self, '_chart_vars'):
                 known_params = {'regline', 'sort_values', 'maks_kategorie', 'min_procent',
-                                'show_percentages', 'pie_style'}  # Dodaj inne znane parametry
+                                'show_percentages', 'pie_style'}  # Znane parametry
 
                 for key, var in self._chart_vars.items():
                     if key in known_params and isinstance(var, (tk.BooleanVar, tk.IntVar, tk.DoubleVar, tk.StringVar)):
@@ -1703,20 +1688,35 @@ class MainApp(tk.Tk):
 
         chart_type = self.chart_type.get()
 
-        # Reset / aktywizacja głównych comboboxów
-        needs_x = chart_type in ("scatter", "line", "bar", "pie")
-        needs_y = chart_type in ("scatter", "line", "bar")
+        # Reset / aktywizacja głównych comboboxów zależnie od typu wykresu
+        needs_x = chart_type in ("scatter", "line", "bar", "pie")  # Wszystkie potrzebują X
+        needs_y = chart_type in ("scatter", "line")  # Tylko scatter i line zawsze potrzebują Y
+        optional_y = chart_type in ("bar")  # Bar może, ale nie musi mieć Y
+
+        # Pole Kolor tylko dla scatter i line, a nie dla bar (usunięte dla wykresu słupkowego)
         needs_hue = chart_type in ("scatter", "line")
 
         self._set_combo_state(self.x_col, needs_x)
-        self._set_combo_state(self.y_col, needs_y)
+
+        # Dla kolumny Y: albo obowiązkowa, albo opcjonalna
+        if needs_y:
+            self._set_combo_state(self.y_col, True)
+        elif optional_y:
+            # Bar może, ale nie musi mieć Y - ustaw stan na "readonly" ale bez czyszczenia
+            self.y_col.config(state="readonly")
+        else:
+            # Pie nie używa Y wcale - wyczyść i deaktywuj
+            self.y_col.set("")
+            self.y_col.config(state="disabled")
+
+        # Pole kolor - tylko dla scatter i line
         self._set_combo_state(self.hue_col, needs_hue)
 
         # Słownik zmiennych pomocniczych (tworzony raz)
         if not hasattr(self, "_chart_vars"):
             self._chart_vars = {}
 
-        # Dodatkowe opcje specyficzne
+        # Dodatkowe opcje specyficzne dla typów wykresów
         if chart_type in ("scatter", "line"):
             self._chart_vars["regline"] = tk.BooleanVar(value=False)
             ttk.Checkbutton(self.options_frame, text="Linia regresji",
@@ -1726,6 +1726,16 @@ class MainApp(tk.Tk):
             self._chart_vars["sort_values"] = tk.BooleanVar(value=True)
             ttk.Checkbutton(self.options_frame, text="Sortuj wartości",
                             variable=self._chart_vars["sort_values"]).pack(anchor="w")
+
+            # Dodaj informację o dwóch trybach dla Bar
+            ttk.Label(self.options_frame, text="Bar - tryby pracy:",
+                      font=("Arial", 9, "bold")).pack(anchor="w", pady=(5, 0))
+            ttk.Label(self.options_frame,
+                      text="- Z kolumną Y: tradycyjny wykres słupkowy",
+                      font=("Arial", 8)).pack(anchor="w")
+            ttk.Label(self.options_frame,
+                      text="- Bez kolumny Y: wykres liczebności",
+                      font=("Arial", 8)).pack(anchor="w")
 
         if chart_type == "pie":
             ttk.Label(self.options_frame, text="Maks kategorii:").pack(anchor="w")
