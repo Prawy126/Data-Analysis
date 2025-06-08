@@ -165,7 +165,7 @@ def rysuj_wykres(
 
         ax.axis('equal')
 
-        # PEŁNA LEGENDA + INTERAKTYWNOŚĆ
+        # PEŁNA LEGENDA + INTERAKTYWNOŚĆ - Zastosowanie nowej wersji
         _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colors, dane)
 
     else:
@@ -185,14 +185,12 @@ def rysuj_wykres(
 
 def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colors, dane):
     """
-    Tworzy PEŁNĄ legendę z interaktywnością i scrollowaniem
+    Tworzy PEŁNĄ legendę z interaktywnością i automatycznym rozmieszczeniem w wielu kolumnach
     """
     total_items = len(labels)
-    max_visible = 10  # Maksymalna liczba widocznych elementów
 
     # Stan legendy
     legend_state = {
-        'scroll_position': 0,
         'highlighted_wedge': None,
         'original_colors': [w.get_facecolor() for w in wedges],
         'legend_obj': None,
@@ -210,7 +208,7 @@ def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colo
         return legend_labels
 
     def update_legend():
-        """Aktualizuje pełną legendę"""
+        """Aktualizuje pełną legendę z automatycznym formatowaniem w kolumnach"""
         # Usuń poprzednią legendę
         if legend_state['legend_obj']:
             legend_state['legend_obj'].remove()
@@ -219,22 +217,24 @@ def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colo
         if legend_state['info_text']:
             legend_state['info_text'].remove()
 
-        # Jeśli mało elementów - pokaż wszystkie
-        if total_items <= max_visible:
-            visible_wedges = wedges
-            visible_labels = create_legend_labels()
-            scroll_info = f"Wszystkie {total_items} kategorii"
-        else:
-            # Pokaż fragment z scrollowaniem
-            start_idx = legend_state['scroll_position']
-            end_idx = min(start_idx + max_visible, total_items)
+        visible_wedges = wedges
+        visible_labels = create_legend_labels()
 
-            visible_wedges = wedges[start_idx:end_idx]
-            all_labels = create_legend_labels()
-            visible_labels = all_labels[start_idx:end_idx]
-            scroll_info = f"Pozycja {start_idx + 1}-{end_idx} z {total_items}"
+        # Automatyczne dopasowanie liczby kolumn względem ilości elementów
+        ncol = 1
+        if total_items > 8:
+            ncol = 2
+        if total_items > 16:
+            ncol = 3
+        if total_items > 24:
+            ncol = 4
 
-        # Utwórz legendę - POPRAWIONA wersja bez title_fontweight
+        # Zmniejszamy rozmiar czcionki przy dużej liczbie elementów
+        fontsize = 9
+        if total_items > 20:
+            fontsize = 8
+
+        # Utwórz legendę z wieloma kolumnami
         legend = ax.legend(
             visible_wedges, visible_labels,
             title="Kategorie (kliknij aby podświetlić)",
@@ -242,9 +242,9 @@ def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colo
             bbox_to_anchor=(1.05, 0.5),
             frameon=True,
             shadow=True,
-            fontsize=9,
+            fontsize=fontsize,
             title_fontsize=10,
-            # title_fontweight='bold'  ← USUNIĘTE - powodowało błąd
+            ncol=ncol  # Automatycznie rozmieszczaj w kolumnach
         )
 
         # Stylizuj legendę
@@ -258,21 +258,18 @@ def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colo
 
         legend_state['legend_obj'] = legend
 
-        # Dodaj info o scrollowaniu
-        legend_state['info_text'] = fig.text(0.85, 0.12, scroll_info,
-                                             fontsize=8, ha='center',
-                                             style='italic', color='gray')
+        # Dodaj info o liczbie kategorii
+        legend_state['info_text'] = fig.text(
+            0.85, 0.12,
+            f"Łącznie {total_items} kategorii",
+            fontsize=8, ha='center',
+            style='italic', color='gray'
+        )
 
         # Dodaj interaktywność do tekstów legendy
         for i, legend_text in enumerate(legend.get_texts()):
             legend_text.set_picker(True)
-            # Zapisz indeks w globalnej tablicy
-            actual_idx = legend_state['scroll_position'] + i if total_items > max_visible else i
-            legend_text.wedge_index = actual_idx
-
-        # Dodaj przyciski scrollowania jeśli potrzebne
-        if total_items > max_visible:
-            _add_scroll_buttons(fig, legend_state, update_legend)
+            legend_text.wedge_index = i
 
     def highlight_wedge(wedge_idx, highlight=True):
         """Podświetla kawałek wykresu"""
@@ -343,7 +340,7 @@ def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colo
                 legend_state['hover_text'].remove()
                 legend_state['hover_text'] = None
 
-            # Sprawdź czy najechaano na kawałek wykresu
+            # Sprawdź czy najechano na kawałek wykresu
             for i, wedge in enumerate(wedges):
                 if wedge.contains_point([event.x, event.y]):
                     if legend_state['highlighted_wedge'] != i:
@@ -381,8 +378,6 @@ def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colo
 
     # Inicjalne utworzenie legendy
     update_legend()
-
-
 def _add_scroll_buttons(fig, legend_state, update_callback):
     """Dodaje przyciski przewijania"""
     max_visible = 10
