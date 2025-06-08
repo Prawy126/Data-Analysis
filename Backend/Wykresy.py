@@ -65,15 +65,46 @@ def rysuj_wykres(
     # Wyczyść oś przed rysowaniem
     ax.clear()
 
+    # Sprawdź parametr hue - jeśli jest "brak" lub pusty, zamień na None
+    if kolumna_hue == "brak" or kolumna_hue == "":
+        kolumna_hue = None
+    if kolumna_koloru == "brak" or kolumna_koloru == "":
+        kolumna_koloru = None
+
+    # Sprawdź kolumnę Y - zamień na None jeśli jest pusta
+    if kolumna_y == "" or kolumna_y == "brak":
+        kolumna_y = None
+
+    # Wybierz jeden z parametrów jako efektywny hue
+    effective_hue = None
+    if kolumna_hue is not None and kolumna_hue in df.columns:
+        effective_hue = kolumna_hue
+    elif kolumna_koloru is not None and kolumna_koloru in df.columns:
+        effective_hue = kolumna_koloru
+
     # Scatter - potrzebuje kolumn X i Y
     if typ_wykresu == "scatter":
         if kolumna_x is None or kolumna_y is None:
             raise ValueError("Dla scatter wymagane są kolumny x i y.")
-        sns.scatterplot(
-            data=df, x=kolumna_x, y=kolumna_y,
-            hue=kolumna_koloru or kolumna_hue, size=kolumna_rozmiaru,
-            alpha=alpha, edgecolor="w", marker=marker, ax=ax
-        )
+
+        scatter_params = {
+            "data": df,
+            "x": kolumna_x,
+            "y": kolumna_y,
+            "alpha": alpha,
+            "edgecolor": "w",
+            "marker": marker,
+            "ax": ax
+        }
+
+        # Dodaj parametry tylko jeśli nie są None
+        if effective_hue is not None:
+            scatter_params["hue"] = effective_hue
+        if kolumna_rozmiaru is not None:
+            scatter_params["size"] = kolumna_rozmiaru
+
+        sns.scatterplot(**scatter_params)
+
         if regline:
             sns.regplot(
                 data=df, x=kolumna_x, y=kolumna_y,
@@ -94,15 +125,22 @@ def rysuj_wykres(
         if kolumna_y is not None:
             if sort_values:
                 data = data.sort_values(kolumna_y, ascending=not descending)
-            sns.barplot(
-                data=data,
-                x=kolumna_x if orient == "v" else kolumna_y,
-                y=kolumna_y if orient == "v" else kolumna_x,
-                orient=orient,
-                errorbar=None,
-                ax=ax,
-                hue=kolumna_hue
-            )
+
+            # Parametry dla barplot
+            bar_params = {
+                'data': data,
+                'x': kolumna_x if orient == "v" else kolumna_y,
+                'y': kolumna_y if orient == "v" else kolumna_x,
+                'orient': orient,
+                'errorbar': None,
+                'ax': ax
+            }
+
+            # Dodaj hue tylko jeśli jest dostępny
+            if effective_hue is not None:
+                bar_params['hue'] = effective_hue
+
+            sns.barplot(**bar_params)
             ax.set_xlabel(etykieta_x or kolumna_x)
             ax.set_ylabel(etykieta_y or kolumna_y)
 
@@ -119,13 +157,16 @@ def rysuj_wykres(
                 other_count = counts.iloc[maks_kategorie - 1:].sum()
                 counts = pd.concat([top_counts, pd.Series({"Inne": other_count})])
 
+            # Przygotuj kolory
+            colors = sns.color_palette(palette, n_colors=len(counts))
+
             # Narysuj wykres
             if orient == "v":
-                ax.bar(counts.index, counts.values, color=sns.color_palette(palette, n_colors=len(counts)))
+                bars = ax.bar(counts.index, counts.values, color=colors)
                 ax.set_xlabel(etykieta_x or kolumna_x)
                 ax.set_ylabel(etykieta_y or "Liczebność")
             else:
-                ax.barh(counts.index, counts.values, color=sns.color_palette(palette, n_colors=len(counts)))
+                bars = ax.barh(counts.index, counts.values, color=colors)
                 ax.set_xlabel(etykieta_x or "Liczebność")
                 ax.set_ylabel(etykieta_y or kolumna_x)
 
@@ -136,6 +177,9 @@ def rysuj_wykres(
                 else:
                     ax.text(v, i, f"{v}", ha='left', va='center')
 
+            # Dodaj interaktywność do słupków
+            _add_bar_interactivity(fig, ax, bars, counts)
+
         # Rotacja etykiet
         for lbl in ax.get_xticklabels():
             lbl.set_rotation(45)
@@ -145,13 +189,26 @@ def rysuj_wykres(
     elif typ_wykresu == "line":
         if kolumna_x is None or kolumna_y is None:
             raise ValueError("Dla line wymagane są kolumny x i y.")
-        sns.lineplot(
-            data=df, x=kolumna_x, y=kolumna_y,
-            hue=kolumna_hue, marker=marker, ax=ax
-        )
+
+        # Parametry dla lineplot
+        line_params = {
+            'data': df,
+            'x': kolumna_x,
+            'y': kolumna_y,
+            'marker': marker,
+            'ax': ax
+        }
+
+        # Dodaj hue tylko jeśli jest dostępny
+        if effective_hue is not None:
+            line_params['hue'] = effective_hue
+
+        sns.lineplot(**line_params)
+
         if fill_between:
-            if kolumna_hue is None:
+            if effective_hue is None:  # fill_between działa tylko bez hue
                 ax.fill_between(df[kolumna_x], df[kolumna_y], alpha=0.15)
+
         ax.grid(True)
         ax.set_xlabel(etykieta_x or kolumna_x)
         ax.set_ylabel(etykieta_y or kolumna_y)
@@ -161,7 +218,29 @@ def rysuj_wykres(
         if kolumna_x is None:
             raise ValueError("Dla pie wykresu wymagane jest podanie kolumny x.")
 
-        dane = df[kolumna_x].dropna()
+        # Upewnij się, że parametry są poprawnego typu
+        try:
+            maks_kategorie = int(maks_kategorie)
+        except (TypeError, ValueError):
+            maks_kategorie = 8  # Wartość domyślna
+
+        try:
+            min_procent = float(min_procent)
+        except (TypeError, ValueError):
+            min_procent = 1.0  # Wartość domyślna
+
+        if not isinstance(show_percentages, bool):
+            show_percentages = True  # Wartość domyślna
+
+        if pie_style not in ["full", "donut"]:
+            pie_style = "full"  # Wartość domyślna
+
+        # Zrzutuj na listę w przypadku serii
+        if isinstance(kolumna_x, pd.Series):
+            dane = kolumna_x.dropna()
+        else:
+            dane = df[kolumna_x].dropna()
+
         pct = dane.value_counts(normalize=True) * 100
 
         # Grupowanie i obsługa dużej liczby kategorii
@@ -170,6 +249,7 @@ def rysuj_wykres(
             other = pct.iloc[maks_kategorie - 1:].sum()
             pct = pd.concat([top, pd.Series({"Inne": other})])
 
+        # Filtrowanie według minimalnego procentu
         pct = pct[pct >= min_procent]
         if pct.empty:
             pct = pd.Series({"Inne": 100.0})
@@ -196,6 +276,9 @@ def rysuj_wykres(
 
         ax.clear()
 
+        # Określenie szerokości wykresu (pełny/pączek)
+        wedge_width = 1.0 if pie_style == "full" else 0.4
+
         # GŁÓWNY WYKRES KOŁOWY
         wedges, texts, autotexts = ax.pie(
             sizes,
@@ -204,8 +287,7 @@ def rysuj_wykres(
             startangle=90,
             explode=explode,
             colors=colors[:len(sizes)],
-            wedgeprops=dict(width=1.0 if pie_style == "full" else 0.4,
-                            edgecolor='white', linewidth=3),
+            wedgeprops=dict(width=wedge_width, edgecolor='white', linewidth=3),
             textprops={'fontsize': 11, 'weight': 'bold', 'color': 'white'},
             pctdistance=0.85,
             shadow=True
@@ -231,6 +313,123 @@ def rysuj_wykres(
     return fig, ax
 
 
+def _add_bar_interactivity(fig, ax, bars, counts):
+    """Dodaje interaktywność do słupków wykresu."""
+    # Stan słupków
+    bar_state = {
+        'highlighted_bar': None,
+        'hover_text': None,
+        'original_colors': [b.get_facecolor() for b in bars]
+    }
+
+    def highlight_bar(bar_idx, highlight=True):
+        """Podświetla słupek"""
+        if bar_idx >= len(bars):
+            return
+
+        bar = bars[bar_idx]
+
+        if highlight:
+            # Podświetl wybrany słupek
+            bar.set_edgecolor('#000000')
+            bar.set_linewidth(2)
+            bar.set_alpha(1.0)
+
+            # Przyciemnij pozostałe
+            for i, other_bar in enumerate(bars):
+                if i != bar_idx:
+                    other_bar.set_alpha(0.3)
+
+            # Pokaż szczegółowe info
+            label = counts.index[bar_idx]
+            value = counts.values[bar_idx]
+            percent = (value / counts.values.sum()) * 100
+
+            ax.set_title(f"{label}: {value} ({percent:.2f}%)",
+                         fontsize=12, weight='bold')
+        else:
+            # Przywróć normalny wygląd
+            bar.set_edgecolor(None)
+            bar.set_linewidth(0)
+            bar.set_alpha(1.0)
+
+            # Przywróć wszystkie słupki
+            for other_bar in bars:
+                other_bar.set_alpha(1.0)
+
+            # Przywróć oryginalny tytuł
+            ax.set_title("")
+
+        fig.canvas.draw_idle()
+
+    def on_bar_click(event):
+        """Obsługa kliknięcia w słupek"""
+        for i, bar in enumerate(bars):
+            if bar.contains(event)[0]:
+                # Toggle highlight
+                if bar_state['highlighted_bar'] == i:
+                    highlight_bar(i, False)
+                    bar_state['highlighted_bar'] = None
+                else:
+                    # Usuń poprzednie podświetlenie
+                    if bar_state['highlighted_bar'] is not None:
+                        highlight_bar(bar_state['highlighted_bar'], False)
+
+                    # Podświetl nowy słupek
+                    highlight_bar(i, True)
+                    bar_state['highlighted_bar'] = i
+
+                break
+
+    def on_bar_hover(event):
+        """Obsługa najechania na słupek"""
+        if not event.inaxes:
+            return
+
+        for i, bar in enumerate(bars):
+            if bar.contains(event)[0]:
+                if bar_state['highlighted_bar'] != i:
+                    # Lekkie podświetlenie przy hover
+                    bar.set_edgecolor('#333333')
+                    bar.set_linewidth(1)
+
+                    # Pokaż tooltip
+                    label = counts.index[i]
+                    value = counts.values[i]
+
+                    # Usuń poprzedni tekst
+                    if bar_state['hover_text']:
+                        bar_state['hover_text'].remove()
+                        bar_state['hover_text'] = None
+
+                    # Tekst na dole wykresu
+                    bar_state['hover_text'] = fig.text(0.5, 0.02,
+                                                       f"{label}: {value}",
+                                                       ha='center', fontsize=10,
+                                                       weight='bold',
+                                                       bbox=dict(boxstyle="round,pad=0.3",
+                                                                 facecolor='#FFFFCC', alpha=0.8))
+
+                    fig.canvas.draw_idle()
+                break
+        else:
+            # Brak hover - przywróć normalny wygląd
+            for i, bar in enumerate(bars):
+                if bar_state['highlighted_bar'] != i:
+                    bar.set_edgecolor(None)
+                    bar.set_linewidth(0)
+
+            # Usuń tooltip
+            if bar_state['hover_text'] and not event.inaxes:
+                bar_state['hover_text'].remove()
+                bar_state['hover_text'] = None
+                fig.canvas.draw_idle()
+
+    # Podłącz eventy
+    fig.canvas.mpl_connect('button_press_event', on_bar_click)
+    fig.canvas.mpl_connect('motion_notify_event', on_bar_hover)
+
+
 def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colors, dane):
     """
     Tworzy PEŁNĄ legendę z interaktywnością i automatycznym rozmieszczeniem w wielu kolumnach
@@ -243,7 +442,8 @@ def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colo
         'original_colors': [w.get_facecolor() for w in wedges],
         'legend_obj': None,
         'info_text': None,
-        'hover_text': None
+        'hover_text': None,
+        'scroll_position': 0  # dodane dla obsługi przewijania
     }
 
     def create_legend_labels():
@@ -380,6 +580,28 @@ def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colo
                 highlight_wedge(wedge_idx, True)
                 legend_state['highlighted_wedge'] = wedge_idx
 
+    def on_wedge_click(event):
+        """Obsługa kliknięcia bezpośrednio na kawałek wykresu"""
+        if event.inaxes != ax:
+            return
+
+        for i, wedge in enumerate(wedges):
+            if wedge.contains_point([event.x, event.y]):
+                # Toggle highlight
+                if legend_state['highlighted_wedge'] == i:
+                    highlight_wedge(i, False)
+                    legend_state['highlighted_wedge'] = None
+                else:
+                    # Usuń poprzednie podświetlenie
+                    if legend_state['highlighted_wedge'] is not None:
+                        highlight_wedge(legend_state['highlighted_wedge'], False)
+
+                    # Podświetl nowy kawałek
+                    highlight_wedge(i, True)
+                    legend_state['highlighted_wedge'] = i
+
+                break
+
     def on_hover(event):
         """Obsługa najechania myszką - CIEMNY TEKST"""
         if event.inaxes == ax:
@@ -423,9 +645,12 @@ def _create_full_interactive_legend(fig, ax, wedges, labels, sizes, counts, colo
     # Podłącz eventy
     fig.canvas.mpl_connect('pick_event', on_pick)
     fig.canvas.mpl_connect('motion_notify_event', on_hover)
+    fig.canvas.mpl_connect('button_press_event', on_wedge_click)
 
     # Inicjalne utworzenie legendy
     update_legend()
+
+
 def _add_scroll_buttons(fig, legend_state, update_callback):
     """Dodaje przyciski przewijania"""
     max_visible = 10

@@ -83,7 +83,7 @@ class MainApp(tk.Tk):
         # Styl dla głównego przycisku
         style.configure('Accent.TButton',
                         font=('Arial', 9, 'bold'),
-                        foreground='white')
+                        foreground='black')
 
         # Próba ustawienia tła (może nie działać na wszystkich systemach)
         try:
@@ -424,17 +424,14 @@ class MainApp(tk.Tk):
         # Pobierz listy kolumn
         cols = df.columns.tolist()
         numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
-        cat_cols = df.select_dtypes(include=["category", "object"]).columns.tolist()
 
         # Aktualizuj comboboxy
         self.x_col["values"] = cols
-        self.y_col["values"] = numeric_cols
-        self.hue_col["values"] = ["brak"] + cat_cols
+        self.y_col["values"] = ["brak"] + numeric_cols
 
         # Ustaw domyślne wartości jeśli istnieją
         self.x_col.set(cols[0] if cols else "")
-        self.y_col.set(numeric_cols[0] if numeric_cols else "")
-        self.hue_col.set("brak")
+        self.y_col.set("brak" if self.chart_type.get() == "bar" else (numeric_cols[0] if numeric_cols else ""))
 
     def _load_pre(self) -> None:
         """Buduje zakładkę "Cleaning" – pre-processing."""
@@ -1683,6 +1680,7 @@ class MainApp(tk.Tk):
         # Automatyczne obliczenie korelacji, jeśli dane są już wczytane
         if self.df is not None:
             run_corr()
+
     def _build_visualization_tab(self) -> None:
         """
         Zakładka "Wizualizacje" - ZMODYFIKOWANA WERSJA bez sekcji historii
@@ -1739,8 +1737,7 @@ class MainApp(tk.Tk):
         action_frame = ttk.Frame(header_frame)
         action_frame.pack(fill="x", pady=5)
 
-        ttk.Button(action_frame, text="💾", width=4,
-                   command=self._save_current_chart).pack(side="left", padx=1)
+        # Usunięty przycisk zapisu
         ttk.Button(action_frame, text="⟲", width=4,
                    command=self._refresh_current_chart).pack(side="left", padx=1)
 
@@ -1760,7 +1757,7 @@ class MainApp(tk.Tk):
         self.chart_type.bind("<<ComboboxSelected>>", self._update_chart_options)
 
         # Kolumny - kompaktowo
-        for label, attr in [("X:", "x_col"), ("Y:", "y_col"), ("Kolor:", "hue_col")]:
+        for label, attr in [("X:", "x_col"), ("Y:", "y_col")]:
             ttk.Label(basic_frame, text=label, font=("Arial", 8)).pack(anchor="w", pady=(3, 0))
             combo = ttk.Combobox(basic_frame, state="readonly", height=4)
             combo.pack(fill="x", pady=1)
@@ -1836,7 +1833,6 @@ class MainApp(tk.Tk):
             self._update_visualization_columns(self.df)
         self._update_chart_options()
 
-
     def _generate_plot_enhanced(self):
         """Generuje wykres z zapisem do historii"""
         if self.df is None:
@@ -1848,20 +1844,43 @@ class MainApp(tk.Tk):
             self.figure.clear()
             ax = self.figure.add_subplot(111)
 
+            # Określ kolumnę Y - jeśli "brak", to ustaw na None
+            kolumna_y = self.y_col.get()
+            if kolumna_y == "brak":
+                kolumna_y = None
+
+            # Podstawowe parametry
             params = {
                 "df": self.df,
                 "typ_wykresu": self.chart_type.get(),
                 "kolumna_x": self.x_col.get() or None,
-                "kolumna_y": self.y_col.get() if self.chart_type.get() != "pie" else None,
-                "kolumna_hue": self.hue_col.get() if self.hue_col.get() != "brak" else None,
+                "kolumna_y": kolumna_y,
+                "kolumna_hue": None,  # Usunięty parametr koloru
                 "nazwa_wykresu": self.chart_title.get() or None,
                 "etykieta_x": self.x_label.get() or None,
                 "etykieta_y": self.y_label.get() or None,
                 "palette": self.palette_var.get(),
                 "fig": self.figure,
-                "ax": ax
+                "ax": ax,
+                "sort_values": True,  # Wartości domyślne
+                "descending": True  # Wartości domyślne
             }
 
+            # Dodaj specyficzne parametry dla wykresu kołowego
+            if self.chart_type.get() == "pie" and hasattr(self, '_chart_vars'):
+                if "maks_kategorie" in self._chart_vars:
+                    params["maks_kategorie"] = self._chart_vars["maks_kategorie"].get()
+
+                if "min_procent" in self._chart_vars:
+                    params["min_procent"] = self._chart_vars["min_procent"].get()
+
+                if "pie_style" in self._chart_vars:
+                    params["pie_style"] = self._chart_vars["pie_style"].get()
+
+                if "show_percentages" in self._chart_vars:
+                    params["show_percentages"] = self._chart_vars["show_percentages"].get()
+
+            # Wywołaj funkcję rysowania wykresu
             rysuj_wykres(**params)
             self._add_chart_to_history(params.copy())  # Dodaj do historii
             self.canvas.draw()
@@ -1958,7 +1977,6 @@ class MainApp(tk.Tk):
             self.current_chart_index -= 1
             self._refresh_current_chart()
 
-
     def _update_chart_options(self, event=None) -> None:
         """Pokazuje tylko te opcje, które pasują do wybranego typu wykresu."""
         # Wyczyść panel opcji
@@ -1971,7 +1989,6 @@ class MainApp(tk.Tk):
         needs_x = chart_type in ("scatter", "line", "bar", "pie")  # Wszystkie potrzebują X
         needs_y = chart_type in ("scatter", "line")  # Tylko scatter i line zawsze potrzebują Y
         optional_y = chart_type in ("bar")  # Bar może, ale nie musi mieć Y
-        needs_hue = chart_type in ("scatter", "line")  # Pole Kolor tylko dla scatter i line
 
         self._set_combo_state(self.x_col, needs_x)
 
@@ -1979,15 +1996,17 @@ class MainApp(tk.Tk):
         if needs_y:
             self._set_combo_state(self.y_col, True)
         elif optional_y:
-            # Bar może, ale nie musi mieć Y - ustaw stan na "readonly" ale bez czyszczenia
+            # Bar nie potrzebuje Y - domyślnie ustaw "brak"
+            current_values = list(self.y_col["values"])
+            if "brak" not in current_values:
+                self.y_col["values"] = ["brak"] + current_values
+            # Domyślnie ustaw "brak"
+            self.y_col.set("brak")
             self.y_col.config(state="readonly")
         else:
             # Pie nie używa Y wcale - wyczyść i deaktywuj
             self.y_col.set("")
             self.y_col.config(state="disabled")
-
-        # Pole kolor - tylko dla scatter i line
-        self._set_combo_state(self.hue_col, needs_hue)
 
         # Słownik zmiennych pomocniczych (tworzony raz)
         if not hasattr(self, "_chart_vars"):
@@ -2001,8 +2020,10 @@ class MainApp(tk.Tk):
                       text="- Z kolumną Y: tradycyjny wykres słupkowy",
                       font=("Arial", 8)).pack(anchor="w")
             ttk.Label(self.options_frame,
-                      text="- Bez kolumny Y: wykres liczebności",
+                      text="- Bez kolumny Y (\"brak\"): wykres liczebności",
                       font=("Arial", 8)).pack(anchor="w")
+
+            # Usunięte opcje sortowania
 
         if chart_type == "pie":
             ttk.Label(self.options_frame, text="Maks kategorii:").pack(anchor="w")
@@ -2030,6 +2051,7 @@ class MainApp(tk.Tk):
             self._chart_vars["show_percentages"] = tk.BooleanVar(value=True)
             ttk.Checkbutton(self.options_frame, text="Pokaż procenty",
                             variable=self._chart_vars["show_percentages"]).pack(anchor="w")
+
     def _update_columns(self, df: pd.DataFrame) -> None:
         """Aktualizuje listy kolumn po wczytaniu danych"""
         cols = df.columns.tolist()
