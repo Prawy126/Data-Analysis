@@ -655,37 +655,6 @@ class MainApp(tk.Tk):
         except Exception as e:
             messagebox.showerror("Błąd", str(e))
 
-    def _run_extraction(self) -> None:
-        if self.df is None:
-            messagebox.showwarning("Brak danych", "Proszę najpierw wczytać plik CSV!")
-            return
-
-        # Parsowanie pól
-        rows = None
-        if self.rows_entry.get().strip():
-            try:
-                rows = list(map(int, self.rows_entry.get().split(",")))
-            except ValueError:
-                messagebox.showerror("Błąd",
-                                     "Nieprawidłowy format wierszy. Podaj indeksy oddzielone przecinkami.")
-                return
-        cols = None
-        if self.cols_entry.get().strip():
-            cols = [c.strip() for c in self.cols_entry.get().split(",")]
-
-        self._set_busy("Ekstrakcja danych…")
-        try:
-            result = ekstrakcja_podtablicy(
-                self.df, rows=rows, cols=cols,
-                mode=self.mode_var.get(), wyswietlaj_informacje=True
-            )
-            self._commit_df(result)
-            messagebox.showinfo("OK", "Ekstrakcja zakończona!")
-        except Exception as e:
-            messagebox.showerror("Błąd", str(e))
-        finally:
-            self._set_ready()
-
     def _display_dataframe(self, df: pd.DataFrame) -> None:
         """Pokazuje fragment DataFrame zależnie od paginacji."""
         # Jeśli to nowy DF → reset strony
@@ -2060,12 +2029,15 @@ class MainApp(tk.Tk):
 
         self.x_col["values"] = cols
         self.y_col["values"] = numeric_cols
-        self.hue_col["values"] = cat_cols
+
+        if hasattr(self, 'hue_col'):
+            self.hue_col["values"] = cat_cols
 
         if cols:
             self.x_col.set(cols[0])
             self.y_col.set(numeric_cols[0] if numeric_cols else "")
-            self.hue_col.set(cat_cols[0] if cat_cols else "")
+            if hasattr(self, 'hue_col') and cat_cols:
+                self.hue_col.set(cat_cols[0])
 
     def _generate_plot(self) -> None:
         if self.df is None:
